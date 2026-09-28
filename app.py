@@ -1,4 +1,5 @@
 """저평가 우량주 스크리너.  실행: streamlit run app.py"""
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -211,27 +212,61 @@ else:
     st.subheader("실적이 어떻게 흘러왔나")
     kr = row.country == "KR"
     source, unit = ("DART", "억 원") if kr else ("SEC", "백만 달러")
+    period = st.radio("기간", ["연간", "분기"], horizontal=True, key="hist_period",
+                      label_visibility="collapsed")
     try:
-        h = (data.load_history_kr(row.corp_code) if kr
-             else pd.DataFrame() if pd.isna(row.get("cik")) else data.load_history(row.cik))
+        if period == "분기":
+            h = (data.load_history_kr_quarter(row.corp_code) if kr
+                 else pd.DataFrame() if pd.isna(row.get("cik")) else data.load_history_us_quarter(row.cik))
+        else:
+            h = (data.load_history_kr(row.corp_code) if kr
+                 else pd.DataFrame() if pd.isna(row.get("cik")) else data.load_history(row.cik))
     except Exception:                              # 네트워크 오류·차단. 캐시되지 않아 다시 열면 재시도한다
         h = None
         st.warning(f"{source} 응답을 받지 못했습니다. 잠시 뒤 다시 열어보세요.")
     if h is None:
         pass
     elif h.empty:
-        st.warning(f"이 회사는 {source}에 연간 표준 계정이 없어 추이를 만들 수 없습니다.")
+        st.warning(f"이 회사는 {source}에 표준 계정이 없어 추이를 만들 수 없습니다.")
     else:
-        st.caption(f"단위: {unit}")
+        note = " · 분기는 당분기(3개월)" if period == "분기" else ""
+        if period == "분기" and not kr:
+            note += " · 미국은 분기 현금흐름 미제공(손익만)"
+        st.caption(f"단위: {unit}{note}")
+        # 분기 라벨("25 2Q")은 그대로, 연간은 "23년"으로 → 축이 숫자·세로가 아니라 카테고리로 깔끔
+        hy = (h.set_index("연도") if period == "분기"
+              else h.assign(연도=h["연도"].astype(str).str[2:] + "년").set_index("연도"))
         cc1, cc2 = st.columns(2)
-        pnl = [c for c in ["매출액", "영업이익", "순이익"] if c in h]
-        cfl = [c for c in ["영업CF", "투자CF", "재무CF"] if c in h]
+        pnl = [c for c in ["매출액", "영업이익", "순이익"] if c in hy]
+        cfl = [c for c in ["영업CF", "투자CF", "재무CF"] if c in hy]
         if pnl:
-            cc1.line_chart(h.set_index("연도")[pnl])
+            long = hy[pnl].reset_index().melt("연도", var_name="항목", value_name="값")
+            ymax, ymin = long["값"].max(), long["값"].min()
+            # 0선 위(양수)는 옅은 파랑, 아래(음수)는 옅은 빨강 배경으로 흑자·적자를 한눈에
+            pos = alt.Chart(pd.DataFrame({"y": [0], "y2": [max(ymax, 0)]})).mark_rect(
+                color="#3b82f6", opacity=0.06).encode(y="y:Q", y2="y2:Q")
+            neg = alt.Chart(pd.DataFrame({"y": [min(ymin, 0)], "y2": [0]})).mark_rect(
+                color="#e5484d", opacity=0.06).encode(y="y:Q", y2="y2:Q")
+            line = alt.Chart(long).mark_line(point=True).encode(
+                x=alt.X("연도:N", title=None, sort=list(hy.index)),
+                y=alt.Y("값:Q", title=None),
+                color=alt.Color("항목:N", title=None,
+                                scale=alt.Scale(domain=pnl,
+                                                range=["#1f4e9e", "#e5484d", "#5b8def"][:len(pnl)])),
+                tooltip=["연도", "항목", alt.Tooltip("값:Q", format=",.0f")])
+            cc1.altair_chart(pos + neg + line, use_container_width=True)
         if cfl:
-            cc2.bar_chart(h.set_index("연도")[cfl])
-            cc2.caption("영업에서 벌어 · 투자에 쓰고 · 재무로 조달/상환한 금액")
-        st.dataframe(h.set_index("연도").T.round(0), use_container_width=True)
+            cc2.bar_chart(hy[cfl])
+            cc2.caption("영업에서 벌어(+) · 투자에 쓰고(−) · 재무로 조달·상환(−)한 실제 현금")
+        # 값 옆에 전기 대비 증감률(%). 첫 기간·직전이 0/결측이면 % 생략
+        chg = hy.pct_change() * 100
+        disp = hy.astype(object)
+        for c in hy.columns:
+            for i in hy.index:
+                v, p = hy.at[i, c], chg.at[i, c]
+                disp.at[i, c] = ("–" if pd.isna(v) else f"{v:,.0f}"
+                                 + ("" if pd.isna(p) or abs(p) == float("inf") else f"  ({p:+.0f}%)"))
+        st.dataframe(disp.T, use_container_width=True)
 
     with st.expander("보조 지표"):
         st.dataframe(pd.DataFrame(

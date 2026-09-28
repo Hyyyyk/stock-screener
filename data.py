@@ -312,8 +312,9 @@ def parse_kr_history(reports):
     return h.reset_index()
 
 
-def _dart_report(corp_code, year):
-    """사업보고서 전체 재무제표 행. 연결(CFS)이 없으면 별도(OFS).
+def _dart_report(corp_code, year, reprt="11011"):
+    """전체 재무제표 행. reprt: 11011 사업보고서(연간) · 11013 1Q · 11012 반기 · 11014 3Q.
+    연결(CFS)이 없으면 별도(OFS).
 
     지난 연도의 '없음'(013) 응답은 캐시해 다시 묻지 않는다. 최신 연도는 아직 공시 전일 수 있어
     '없음'을 캐시하면 나중에 보고서가 올라와도 영영 안 보이므로 캐시하지 않는다.
@@ -321,12 +322,12 @@ def _dart_report(corp_code, year):
     from collect_kr import YEAR, api
 
     for fs in ("CFS", "OFS"):
-        path = CACHE / f"dart_full_{corp_code}_{year}_{fs}.json"
+        path = CACHE / f"dart_full_{corp_code}_{year}_{reprt}_{fs}.json"
         if path.exists():
             d = json.loads(path.read_text(encoding="utf-8"))
         else:
             d = json.loads(api("fnlttSinglAcntAll.json", corp_code=corp_code, bsns_year=str(year),
-                               reprt_code="11011", fs_div=fs))   # 네트워크 오류는 그대로 올려 캐시하지 않는다
+                               reprt_code=reprt, fs_div=fs))      # 네트워크 오류는 그대로 올려 캐시하지 않는다
             time.sleep(0.5)                                      # DART 는 순간 속도를 내면 연결을 끊는다
             if d.get("status") == "000" or (d.get("status") == "013" and int(year) < int(YEAR)):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -334,6 +335,98 @@ def _dart_report(corp_code, year):
         if d.get("status") == "000":
             return d["list"]
     return []
+
+
+# ---------------- 분기 실적 ----------------
+QUARTER_REPRT = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}   # 분기 → DART 보고서코드
+_IS_LABELS = ("매출액", "영업이익", "순이익")                        # 손익: thstrm = 당분기값
+_CF_LABELS = ("영업CF", "투자CF", "재무CF")                         # 현금흐름: thstrm = 누적 → 차감
+
+
+def _extract_kr(rows):
+    """DART 행 → {label: (당기금액, 누적금액)}. 계정 ID 로 찾는다 (연결/손익 우선순위는 처음 것)."""
+    from collect_kr import num
+
+    found = {}
+    for r in rows:
+        if r.get("sj_div") in ("IS", "CIS", "CF"):
+            found.setdefault((r["sj_div"] == "CF", r.get("account_id")), r)
+    out = {}
+    for label, ids in KR_HISTORY_IDS.items():
+        for aid in ids:
+            r = found.get((label.endswith("CF"), aid))
+            if r:
+                out[label] = (num(r.get("thstrm_amount")), num(r.get("thstrm_add_amount")))
+                break
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner="DART에서 분기 실적을 받는 중… (10초쯤)")
+def load_history_kr_quarter(corp_code: str, n=8) -> pd.DataFrame:
+    """한국 분기 실적(억 원). 손익은 당분기값, 현금흐름은 누적을 차감해 당분기로 만든다.
+
+    최근 연도들의 1Q·반기·3Q·사업보고서를 받아 엮는다(연도당 4호출). 그래서 느리다.
+    """
+    from collect_kr import YEAR
+
+    rep = {}                                          # (연도, 분기) → {label: (당기, 누적)}
+    for y in (int(YEAR), int(YEAR) - 1, int(YEAR) - 2):
+        for q, rc in QUARTER_REPRT.items():
+            rows = _dart_report(corp_code, y, rc)
+            if rows:
+                rep[(y, q)] = _extract_kr(rows)
+
+    def val(key, label, idx):                         # rep 에서 안전하게 꺼내기
+        return (rep.get(key) or {}).get(label, (None, None))[idx]
+
+    out = {}                                          # (연도, 분기) → {label: 당분기값}
+    for (y, q), _ in rep.items():
+        cell = {}
+        for label in _IS_LABELS:                      # 손익: 당분기 = thstrm. Q4 = 연간 - 3Q누적
+            cell[label] = (val((y, 4), label, 0) - val((y, 3), label, 1)
+                           if q == 4 and val((y, 4), label, 0) is not None
+                           and val((y, 3), label, 1) is not None
+                           else val((y, q), label, 0))
+        for label in _CF_LABELS:                      # 현금흐름: 당분기 = 이번 누적 - 직전 분기 누적
+            cur = val((y, q), label, 0)
+            prev = val((y, q - 1), label, 0) if q > 1 else 0
+            cell[label] = cur - prev if cur is not None and prev is not None else None
+        out[(y, q)] = cell
+
+    if not out:
+        return pd.DataFrame()
+    df = pd.DataFrame([{"연도": f"{y % 100:02d}", "분기": f"{q}Q", "_key": y * 10 + q, **c}
+                       for (y, q), c in out.items()])
+    df = df.sort_values("_key").tail(n)
+    df["연도"] = df["연도"] + " " + df["분기"]         # 라벨: "25 2Q"
+    return (df.drop(columns=["분기", "_key"]).set_index("연도").dropna(axis=1, how="all")
+            .div(1e8).reset_index())
+
+
+@st.cache_data(ttl=3600, show_spinner="SEC에서 분기 실적을 받는 중…")
+def load_history_us_quarter(cik: int, n=8) -> pd.DataFrame:
+    """미국 분기 실적(백만 달러). 손익만 — SEC 는 분기 현금흐름을 캘린더 분기로 주지 않는다."""
+    try:
+        facts = _fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
+                       CACHE / f"facts_{int(cik):010d}.json").get("facts", {}).get("us-gaap", {})
+    except Exception:
+        return pd.DataFrame()
+
+    out = {}
+    for label in _IS_LABELS:
+        for tag in HISTORY_TAGS[label]:
+            vals = {x["frame"]: x["val"]
+                    for x in facts.get(tag, {}).get("units", {}).get("USD", [])
+                    if re.fullmatch(r"CY\d{4}Q\d", x.get("frame", ""))}
+            if vals:
+                out[label] = vals
+                break
+    if not out:
+        return pd.DataFrame()
+    idx = sorted(set().union(*[v.keys() for v in out.values()]))   # 있는 분기만, 시간순
+    h = pd.DataFrame(out).reindex(idx)
+    h.index = [f"{f[4:6]} Q{f[7]}" for f in idx]      # CY2025Q2 → "25 Q2"
+    return (h.tail(n) / 1e6).reset_index(names="연도")
 
 
 @st.cache_data(ttl=3600, show_spinner="DART에서 이 회사 이력을 받는 중…")
