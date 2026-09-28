@@ -41,6 +41,18 @@ PENDING = {}
 
 
 @st.cache_data(ttl=600)
+def data_asof():
+    """화면에 보여줄 데이터 기준일: (시세 갱신일, 수급 기준일). 없으면 None."""
+    with sqlite3.connect(DB) as con:
+        def one(sql):
+            try:
+                return pd.read_sql(sql, con).iloc[0, 0]
+            except Exception:
+                return None
+        return one("select max(fetched_at) from prices"), one("select max(flow_asof) from flows")
+
+
+@st.cache_data(ttl=600)
 def load_stocks() -> pd.DataFrame:
     """한국(DART) + 미국(SEC) 재무에 시세를 붙인 전 종목 스냅샷. 1행 = 1종목."""
     with sqlite3.connect(DB) as con:

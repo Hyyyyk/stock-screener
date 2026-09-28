@@ -49,6 +49,15 @@ if missing:
 
 # ---------------- 사이드바: 좁혀나가는 조건 ----------------
 with st.sidebar:
+    _px, _fl = data.data_asof()                  # 데이터 기준일을 맨 위에 표시
+    if _px or _fl:
+        parts = []
+        if _px:
+            parts.append(f"시세 {str(_px)[:10]}")
+        if _fl and len(str(_fl)) == 8:
+            parts.append(f"수급 {str(_fl)[:4]}-{str(_fl)[4:6]}-{str(_fl)[6:8]}")
+        st.caption("📅 " + " · ".join(parts))
+
     st.header("어떻게 좁힐까")
     preset = st.radio("무엇을 더 볼까요", list(PRESETS))
     st.caption({"균형": "다섯 축을 고르게 봅니다",
