@@ -126,14 +126,6 @@ for stage, col, direction, *_ in FILTERS:
     cur = cur[keep.fillna(False) | ~has_axis[col].loc[cur.index]]
     steps.append((stage, cur))
 
-st.subheader("좁혀가는 과정")
-prev = None
-for c, (label, sub) in zip(st.columns(len(steps)), steps):
-    c.metric(label, f"{len(sub):,}", None if prev is None else f"{len(sub) - prev:+,}",
-             delta_color="off", border=True)
-    prev = len(sub)
-st.caption("각 단계에서 지표 값이 없는 종목도 함께 빠집니다 — 판단할 근거가 없으면 후보에 두지 않습니다.")
-
 f = steps[-1][1]
 if f.empty:
     st.error("조건에 맞는 종목이 없습니다. 사이드바에서 조건을 풀어보세요.")
@@ -142,48 +134,56 @@ if f.empty:
 sc_all = data.weighted_score(pct_all, PRESETS[preset])      # 값이 없는 축(미국 수급)은 분모에서 뺀다
 pct, f = pct_all.loc[f.index], f.assign(score=sc_all.loc[f.index])
 
-tab_rank, tab_detail = st.tabs(["🏆 순위", "📄 종목 상세"])
+st.subheader(f"🏆 후보 {len(f):,}종목")
+st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(universe):,}개 종목 기준** "
+           "백분위로 환산해 가중평균한 점수입니다. 100에 가까울수록 조건에 잘 맞습니다."
+           if not by_sector else
+           f"**{preset}** 기준 · **같은 나라·업종·규모 안에서** 백분위를 매겼습니다. "
+           "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다.")
+view = f.sort_values("score", ascending=False).head(100)
+show = pd.DataFrame({
+    "순위": range(1, len(view) + 1),
+    "티커": view.ticker.values,
+    "종목": view["name"].values,
+    "거래소": view.market.values,
+    "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
+    "업종": view.sector.values,
+    "규모": view.size_bucket.values,
+    "점수": view.score.values,
+    **{label: view[col].values for label, col, _, _, _ in CORE},
+})
+st.caption("행을 **클릭**하면 바로 아래에 그 종목 상세가 펼쳐집니다.")
+event = st.dataframe(
+    show, use_container_width=True, hide_index=True, height=520,
+    on_select="rerun", selection_mode="single-row", key="rank_sel",
+    column_config={
+        "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
+        "PBR": st.column_config.NumberColumn(format="%.2f배"),
+        "ROE": st.column_config.NumberColumn(format="%.1f%%"),
+        "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
+        "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
+        "수급": st.column_config.NumberColumn(format="%+.2f%%"),
+    },
+)
+st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
+                   "screener.csv", "text/csv")
 
-with tab_rank:
-    st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(universe):,}개 종목 기준** "
-               "백분위로 환산해 가중평균한 점수입니다. 100에 가까울수록 조건에 잘 맞습니다."
-               if not by_sector else
-               f"**{preset}** 기준 · **같은 나라·업종·규모 안에서** 백분위를 매겼습니다. "
-               "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다.")
-    view = f.sort_values("score", ascending=False).head(100)
-    show = pd.DataFrame({
-        "순위": range(1, len(view) + 1),
-        "티커": view.ticker.values,
-        "종목": view["name"].values,
-        "거래소": view.market.values,
-        "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
-        "업종": view.sector.values,
-        "규모": view.size_bucket.values,
-        "점수": view.score.values,
-        **{label: view[col].values for label, col, _, _, _ in CORE},
-    })
-    st.dataframe(
-        show, use_container_width=True, hide_index=True, height=520,
-        column_config={
-            "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
-            "PBR": st.column_config.NumberColumn(format="%.2f배"),
-            "ROE": st.column_config.NumberColumn(format="%.1f%%"),
-            "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
-            "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
-            "수급": st.column_config.NumberColumn(format="%+.2f%%"),
-        },
-    )
-    st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
-                       "screener.csv", "text/csv")
-
-with tab_detail:
-    top = f.sort_values("score", ascending=False)
-    sel = st.selectbox("종목", top.ticker + "  " + top["name"])
-    idx = f.index[f.ticker == sel.split("  ")[0]][0]
+# ---------------- 클릭한 종목 상세 (표 바로 아래에 펼침) ----------------
+if not event.selection.rows:
+    st.info("👆 위 표에서 종목을 클릭하면 여기에 상세가 펼쳐집니다.")
+else:
+    idx = view.index[event.selection.rows[0]]      # 클릭한 행의 원본 인덱스
     row = f.loc[idx]
+    st.divider()
     st.subheader(f"{row['name']}  ·  {row.ticker}  ·  {row.market}")
-    st.caption(" · ".join(str(x) for x in [row.sector, row.size_bucket] if pd.notna(x))
-               + (f" — {row.sic_desc}" if pd.notna(row.get("sic_desc")) else ""))
+    st.caption(" · ".join(str(x) for x in [row.sector, row.size_bucket] if pd.notna(x)))
+    summary = data.load_business(row.ticker)     # Yahoo 회사 소개(영어). 열 때만 실시간 조회
+    if summary:
+        st.markdown(f"🏢 {summary}")
+    else:                                        # 실패 시 KRX 주요제품 / SEC 업종 한 줄로 폴백
+        biz = row.get("business")
+        if pd.notna(biz) and str(biz).strip() not in ("", "-"):
+            st.markdown(f"🏢 **{biz}**")
 
     c1, c2 = st.columns(2)
     with c1:

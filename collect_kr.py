@@ -148,14 +148,19 @@ def sector_of(name, ksic):
 
 
 def krx_sectors():
-    """종목코드 → (대분류, KRX 업종 원문). krx_listed 와 같은 캐시 파일을 읽는다."""
+    """종목코드 → (대분류, KRX 업종 원문, 주요제품). krx_listed 와 같은 캐시 파일을 읽는다.
+
+    td[4] 는 '주요제품' 칸 = 이 회사가 뭘 하는지 한 줄 (삼성전자 '반도체 제조(메모리)…').
+    """
     krx_listed()                                   # 캐시가 없으면 받아둔다
     html = (CACHE / "krx_corplist.html").read_bytes().decode("cp949")
     out = {}
     for row in html.split("<tr>")[2:]:
-        td = [re.sub(r"\s+", " ", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)[:4]]
-        if len(td) == 4 and re.fullmatch(r"\d{6}", td[2]):
-            out[td[2]] = (sector_of(td[0], td[3]), td[3])
+        td = [re.sub(r"<[^>]+>", "", re.sub(r"\s+", " ", c)).strip()
+              for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)[:5]]
+        if len(td) >= 4 and re.fullmatch(r"\d{6}", td[2]):
+            biz = td[4] if len(td) >= 5 and td[4] not in ("", "-") else None
+            out[td[2]] = (sector_of(td[0], td[3]), td[3], biz)
     return out
 
 
@@ -297,8 +302,9 @@ def finish(targets, got, missing):
 
     df["ticker"] = df.stock_code + df.market.map({"KOSPI": ".KS", "KOSDAQ": ".KQ"})
     sectors = krx_sectors()
-    df["sector"] = df.stock_code.map(lambda c: sectors.get(c, ("미분류", None))[0])
-    df["sic_desc"] = df.stock_code.map(lambda c: sectors.get(c, (None, None))[1])
+    df["sector"] = df.stock_code.map(lambda c: (sectors.get(c) or ("미분류", None, None))[0])
+    df["sic_desc"] = df.stock_code.map(lambda c: (sectors.get(c) or (None, None, None))[1])
+    df["business"] = df.stock_code.map(lambda c: (sectors.get(c) or (None, None, None))[2])
 
     # 이미 받아둔 주식수는 그대로 두고 빈 것만 채운다 - 끊겨도 다시 돌리면 이어진다
     prev = previous_shares()

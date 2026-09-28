@@ -2,10 +2,12 @@
 
 stocks.db 의 미국 재무(SEC) · 한국 재무(DART) · 시세(Yahoo) · 업종을 합쳐 내보낸다.
 """
+import http.cookiejar
 import json
 import re
 import sqlite3
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -54,6 +56,7 @@ def load_stocks() -> pd.DataFrame:
     if not sic.empty:
         us = us.merge(sic, on="cik", how="left")
     us["country"] = "US"
+    us["business"] = us.get("sic_desc")           # 미국은 SEC 업종 상세를 '뭘 하는지'로 쓴다
 
     kr["country"] = "KR"                          # market 은 이미 KOSPI/KOSDAQ
 
@@ -64,7 +67,7 @@ def load_stocks() -> pd.DataFrame:
     if not flows.empty:
         df = df.merge(flows[["ticker", "flow_net_amt", "foreign_hold_ratio", "flow_asof"]], on="ticker", how="left")
     for col in ["price", "currency", "change_pct", "high52", "low52", "kind",
-                "sector", "sic_desc", "cik", "flow_net_amt", "foreign_hold_ratio", "flow_asof"]:
+                "sector", "sic_desc", "business", "cik", "flow_net_amt", "foreign_hold_ratio", "flow_asof"]:
         if col not in df:
             df[col] = pd.NA
     df["sector"] = df.sector.fillna("미분류")
@@ -147,6 +150,58 @@ def load_history(cik: int, years: int = 6) -> pd.DataFrame:
     h = pd.DataFrame(out).sort_index().tail(years) / 1e6      # 백만 달러 단위
     h.index.name = "연도"
     return h.reset_index()
+
+
+# ---------------- 회사 소개 (Yahoo assetProfile, 영어) ----------------
+YAHOO_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+
+@st.cache_resource
+def _yahoo_session():
+    """Yahoo 는 쿠키+crumb 가 있어야 quoteSummary 를 준다. 세션당 한 번 받아 재사용한다."""
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    try:
+        op.open(urllib.request.Request("https://fc.yahoo.com", headers=YAHOO_UA), timeout=10).read()
+    except Exception:
+        pass                                      # 404 여도 A3 쿠키는 세팅된다
+    crumb = op.open(urllib.request.Request(
+        "https://query2.finance.yahoo.com/v1/test/getcrumb", headers=YAHOO_UA), timeout=15).read().decode()
+    return op, crumb
+
+
+def _trim(s, limit=420):
+    """긴 회사 소개를 3~4문장 정도로 자른다. 마지막 마침표에서 끊어 문장을 안 끊는다."""
+    s = " ".join(s.split())
+    if len(s) <= limit:
+        return s
+    cut = s[:limit]
+    return cut[:cut.rfind(". ") + 1] if ". " in cut else cut + "…"
+
+
+def _translate(text):
+    """영어 → 한글. 구글 무료 엔드포인트(비공식). 실패하면 원문 그대로 돌려준다."""
+    try:
+        url = ("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q="
+               + urllib.parse.quote(text))
+        d = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=YAHOO_UA), timeout=15))
+        return "".join(seg[0] for seg in d[0])
+    except Exception:
+        return text
+
+
+@st.cache_data(ttl=86400, show_spinner="회사 정보를 받는 중…")
+def load_business(ticker: str) -> str | None:
+    """종목 하나의 회사 소개(한글). Yahoo 에서 영어를 받아 번역한다. 상세 열 때만. 실패하면 None."""
+    try:
+        op, crumb = _yahoo_session()
+        url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{urllib.parse.quote(ticker)}"
+               f"?modules=assetProfile&crumb={urllib.parse.quote(crumb)}")
+        d = json.load(op.open(urllib.request.Request(url, headers=YAHOO_UA), timeout=15))
+        s = d["quoteSummary"]["result"][0].get("assetProfile", {}).get("longBusinessSummary")
+        return _translate(_trim(s)) if s else None
+    except Exception:
+        return None                               # 차단·형식변경 등 - 화면은 KRX/SEC 한 줄로 폴백
 
 
 def money(v, currency="USD"):
