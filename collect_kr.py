@@ -263,39 +263,44 @@ def main():
     print(f"KRX 상장 {len(listed):,} · DART 매칭 {len(targets):,}종목 "
           f"· 호출 {-(-len(targets) // BATCH):,}회")
 
-    # 재무는 한 번 받으면 분기까지 안 바뀐다. 캐시해두고 재실행 때 재사용해야
-    # 주식수만 다시 받을 때 DART 를 또 135번 두드리지 않는다.
-    fin_cache = CACHE / f"dart_fin_{YEAR}.json"
-    if fin_cache.exists():
-        got = json.loads(fin_cache.read_text(encoding="utf-8"))
-        print(f"  재무 캐시 재사용 {len(got):,}종목")
-        return finish(targets, got, 0)
+    # 재무는 한 번 받으면 분기까지 안 바뀐다. 연도별로 캐시해 재실행 때 재사용한다.
+    got = _collect_annual(targets, YEAR)           # 당기(2025)·전기(2024)
+    got2023 = _collect_annual(targets, "2023")     # 매출 3년 연속 증가 판정용 (2023 당기)
+    return finish(targets, got, got2023)
 
-    got, missing = {}, 0
+
+def _collect_annual(targets, year):
+    """해당 연도 사업보고서 주요계정. {corp_code: {revenue, net_income, ...}}. 연도별 파일 캐시."""
+    cache = CACHE / f"dart_fin_{year}.json"
+    if cache.exists():
+        got = json.loads(cache.read_text(encoding="utf-8"))
+        print(f"  {year} 재무 캐시 재사용 {len(got):,}종목")
+        return got
+    got = {}
     for i in range(0, len(targets), BATCH):
         chunk = targets[i:i + BATCH]
         try:
-            d = json.loads(api("fnlttMultiAcnt.json",
-                               corp_code=",".join(c[1] for c in chunk),
-                               bsns_year=YEAR, reprt_code=ANNUAL_REPORT))
+            d = json.loads(api("fnlttMultiAcnt.json", corp_code=",".join(c[1] for c in chunk),
+                               bsns_year=str(year), reprt_code=ANNUAL_REPORT))
             if d.get("status") == "000":
                 got.update(parse(d["list"]))
-            else:
-                missing += len(chunk)              # 013 = 해당 기간 보고서 없음
         except Exception as e:
-            missing += len(chunk)
-            print(f"  배치 {i // BATCH} 실패: {type(e).__name__}")
+            print(f"  {year} 배치 {i // BATCH} 실패: {type(e).__name__}")
         if (i // BATCH) % 25 == 0:
-            print(f"  {i + len(chunk):>5,}/{len(targets):,}  받음 {len(got):,}")
+            print(f"  {year}: {i + len(chunk):>5,}/{len(targets):,}  받음 {len(got):,}")
         time.sleep(0.1)
+    cache.write_text(json.dumps(got, ensure_ascii=False), encoding="utf-8")
+    return got
 
-    fin_cache.write_text(json.dumps(got, ensure_ascii=False), encoding="utf-8")
-    return finish(targets, got, missing)
 
-
-def finish(targets, got, missing):
-    rows = [{"stock_code": s, "corp_code": cc, "name": nm, "market": mk, **got[cc]}
-            for s, cc, nm, mk in targets if cc in got]
+def finish(targets, got, got2023):
+    rows = []
+    for s, cc, nm, mk in targets:
+        if cc not in got:
+            continue
+        g23 = got2023.get(cc) or {}
+        rows.append({"stock_code": s, "corp_code": cc, "name": nm, "market": mk, **got[cc],
+                     "revenue_2023": g23.get("revenue"), "net_income_2023": g23.get("net_income")})
     if not rows:
         raise SystemExit("DART 에서 받은 재무가 없습니다. 차단이 풀린 뒤 다시 실행하세요.")
     df = derive(pd.DataFrame(rows))
@@ -319,7 +324,7 @@ def finish(targets, got, missing):
     with sqlite3.connect(DB) as con:
         df.to_sql("kr_fundamentals", con, if_exists="replace", index=False)
 
-    print(f"\n{DB} · kr_fundamentals · {len(df):,}종목 저장 (보고서 없음 {missing:,})")
+    print(f"\n{DB} · kr_fundamentals · {len(df):,}종목 저장")
     have = {c: int(df[c].notna().sum()) for c in ["roe", "debt_ratio", "op_growth", "opm", "shares"]}
     print("지표별 값이 있는 종목 수:", have)
     return df

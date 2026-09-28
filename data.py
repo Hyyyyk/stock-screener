@@ -69,8 +69,13 @@ def load_stocks() -> pd.DataFrame:
         us = us.merge(sic, on="cik", how="left")
     us["country"] = "US"
     us["business"] = us.get("sic_desc")           # 미국은 SEC 업종 상세를 '뭘 하는지'로 쓴다
+    # 3년 매출·흑자전환 판정을 나라 무관하게 하려고 공통 컬럼으로 맞춘다 (연도명이 서로 다르다)
+    us["rev_y1"], us["rev_y2"], us["rev_y3"] = us.get("revenue_2023"), us.get("revenue_2024"), us["revenue"]
+    us["ni_prev"] = us.get("net_income_2024")
 
     kr["country"] = "KR"                          # market 은 이미 KOSPI/KOSDAQ
+    kr["rev_y1"], kr["rev_y2"], kr["rev_y3"] = kr.get("revenue_2023"), kr.get("revenue_prev"), kr["revenue"]
+    kr["ni_prev"] = kr.get("net_income_prev")
 
     df = pd.concat([us, kr], ignore_index=True)
     if not px.empty:
@@ -97,6 +102,12 @@ def load_stocks() -> pd.DataFrame:
     df["psr"] = df.market_cap / df.revenue.where(df.revenue > 0)
     # 수급은 순매수 금액을 시가총액으로 나눠야 크기가 다른 종목끼리 비교된다. 미국은 값이 없다(NaN)
     df["flow_net"] = pd.to_numeric(df.flow_net_amt, errors="coerce") / df.market_cap * 100
+
+    # 사용자 관심 패턴 두 가지 (값이 빠지면 자동으로 False → 필터에서 제외)
+    r1, r2, r3 = (pd.to_numeric(df[c], errors="coerce") for c in ("rev_y1", "rev_y2", "rev_y3"))
+    df["rev_up_3y"] = (r1 > 0) & (r1 < r2) & (r2 < r3)                      # 매출 3년 연속 증가
+    df["turnaround"] = (pd.to_numeric(df.ni_prev, errors="coerce") < 0) & \
+                       (pd.to_numeric(df.net_income, errors="coerce") >= 0)  # 흑자전환(전기 적자→당기 흑자)
     return df.dropna(subset=["ticker"]).reset_index(drop=True)
 
 

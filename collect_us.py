@@ -26,7 +26,7 @@ INSTANT = {
     "shares":      ("dei", "EntityCommonStockSharesOutstanding", "shares"),
 }
 # 손익계산서(기간) 항목 - 성장률을 내려면 2개 연도가 필요하다
-YEARS = ["CY2025", "CY2024"]
+YEARS = ["CY2025", "CY2024", "CY2023"]     # 2023 은 '매출 3년 연속 증가' 판정용
 ANNUAL = {
     "net_income": [("us-gaap", "NetIncomeLoss", "USD")],
     # 금융사 등은 '영업이익'을 보고하지 않는다. 세전이익을 대용으로 뒤에 붙인다.

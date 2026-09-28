@@ -86,6 +86,13 @@ with st.sidebar:
                                  "소형주가 '싼가'를 독식합니다.")
 
     st.divider()
+    st.caption("이런 종목만 보기")
+    only_up = st.checkbox("매출 3년 연속 증가", value=False,
+                          help="최근 3년(2023<2024<2025) 매출이 매년 늘어난 종목만.")
+    only_turn = st.checkbox("흑자전환 (작년 적자→올해 흑자)", value=False,
+                            help="직전 연도는 순손실, 최근 연도는 순이익인 종목만.")
+
+    st.divider()
     if by_sector:
         st.caption("각 조건은 **같은 나라·업종·규모 안에서의 등수**로 거릅니다. "
                    "종목이 적은 그룹은 같은 나라·규모 전체 등수와 섞어 튀지 않게 합니다.")
@@ -111,6 +118,10 @@ if drop_funds:
     universe = universe[universe.kind.fillna("EQUITY") == "EQUITY"]
 if CAP_STEPS[cap_label]:
     universe = universe[universe.market_cap_usd >= CAP_STEPS[cap_label]]   # 원화는 환율로 달러 환산해 비교
+if only_up:
+    universe = universe[universe.rev_up_3y]
+if only_turn:
+    universe = universe[universe.turnaround]
 universe = universe.assign(size_bucket=universe.groupby("country").market_cap.transform(data.size_bucket))
 
 # 등수는 업종 필터를 걸기 전(universe) 기준으로 한 번만 매긴다.
@@ -258,15 +269,7 @@ else:
         if cfl:
             cc2.bar_chart(hy[cfl])
             cc2.caption("영업에서 벌어(+) · 투자에 쓰고(−) · 재무로 조달·상환(−)한 실제 현금")
-        # 값 옆에 전기 대비 증감률(%). 첫 기간·직전이 0/결측이면 % 생략
-        chg = hy.pct_change() * 100
-        disp = hy.astype(object)
-        for c in hy.columns:
-            for i in hy.index:
-                v, p = hy.at[i, c], chg.at[i, c]
-                disp.at[i, c] = ("–" if pd.isna(v) else f"{v:,.0f}"
-                                 + ("" if pd.isna(p) or abs(p) == float("inf") else f"  ({p:+.0f}%)"))
-        st.dataframe(disp.T, use_container_width=True)
+        st.dataframe(hy.T.round(0), use_container_width=True)
 
     with st.expander("보조 지표"):
         st.dataframe(pd.DataFrame(
