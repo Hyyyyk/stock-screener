@@ -5,17 +5,16 @@ stocks.db 의 미국 재무(SEC) · 한국 재무(DART) · 시세(Yahoo) · 업�
 import http.cookiejar
 import json
 import re
-import sqlite3
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from datetime import date
 
 import pandas as pd
 import streamlit as st
+import repository
+from settings import CACHE, DB
 
-DB = "stocks.db"
-CACHE = Path("cache")
 UA = {"User-Agent": "stock-screener gusrkds96@gmail.com"}
 
 # 저평가주 발굴에 쓰는 핵심 5축. (표시명, 컬럼, 단위, 클수록좋은가, 한줄설명)
@@ -38,44 +37,89 @@ EXTRA = [
 
 # 아직 소스가 없어 비어 있는 축 → 화면에서 자동으로 빠진다
 PENDING = {}
+FINANCIAL_SECTORS = {"은행·증권", "보험"}
+
+
+def metric_applicable(df, col):
+    """종목별로 점수/필터에 적용할 수 있는 축인지 반환한다.
+
+    미국에는 일별 투자자 수급이 없고, 은행·보험의 부채는 영업 원재료에 가까워
+    제조업식 부채비율을 안전성 점수로 쓰지 않는다.
+    """
+    applicable = pd.Series(True, index=df.index)
+    if col == "flow_net":
+        applicable &= df["country"].eq("KR")
+    elif col == "debt_ratio":
+        applicable &= ~df["sector"].isin(FINANCIAL_SECTORS)
+    return applicable
+
+
+def expected_annual_year(today=None):
+    """사업보고서 제출 시기를 고려해 기대할 수 있는 최신 완료연도."""
+    today = today or date.today()
+    return today.year - (1 if today.month >= 4 else 2)
 
 
 @st.cache_data(ttl=600)
+def data_freshness():
+    """화면에 표시할 소스별 기준일/연도."""
+    tables = repository.load_snapshot_tables()
+    us, kr = tables["us_fundamentals"], tables["kr_fundamentals"]
+    years = []
+    for frame in (us, kr):
+        if "fiscal_year" in frame:
+            years.extend(pd.to_numeric(frame.fiscal_year, errors="coerce").dropna().astype(int).tolist())
+    if not years:  # 기존 DB: 미국 컬럼명의 연도에서 안전하게 추론한다
+        years = [int(m.group(1)) for c in us.columns
+                 if (m := re.fullmatch(r"revenue_(\d{4})", c))]
+    return {"price": repository.scalar("select max(fetched_at) from prices"),
+            "flow": repository.scalar("select max(flow_asof) from flows"),
+            "fiscal_year": max(years) if years else None}
+
+
 def data_asof():
-    """화면에 보여줄 데이터 기준일: (시세 갱신일, 수급 기준일). 없으면 None."""
-    with sqlite3.connect(DB) as con:
-        def one(sql):
-            try:
-                return pd.read_sql(sql, con).iloc[0, 0]
-            except Exception:
-                return None
-        return one("select max(fetched_at) from prices"), one("select max(flow_asof) from flows")
+    """기존 호출부 호환용: (시세 갱신일, 수급 기준일)."""
+    fresh = data_freshness()
+    return fresh["price"], fresh["flow"]
+
+
+def _annual_years(columns, prefix="revenue_"):
+    return sorted((int(m.group(1)) for c in columns
+                   if (m := re.fullmatch(fr"{re.escape(prefix)}(\d{{4}})", c))), reverse=True)
 
 
 @st.cache_data(ttl=600)
 def load_stocks() -> pd.DataFrame:
     """한국(DART) + 미국(SEC) 재무에 시세를 붙인 전 종목 스냅샷. 1행 = 1종목."""
-    with sqlite3.connect(DB) as con:
-        us = _read(con, "us_fundamentals")
-        kr = _read(con, "kr_fundamentals")
-        px = _read(con, "prices")
-        sic = _read(con, "sectors")
-        flows = _read(con, "flows")               # 한국 수급 (collect_flow.py, 네이버 비공식)
+    tables = repository.load_snapshot_tables()
+    us, kr, px, sic, flows = (tables[name] for name in
+                              ("us_fundamentals", "kr_fundamentals", "prices", "sectors", "flows"))
 
-    # 미국은 연도가 컬럼명에 붙어 있어 한국과 이름을 맞춘다
-    us = us.rename(columns={"net_income_2025": "net_income", "revenue_2025": "revenue",
-                            "op_income_2025": "op_income", "exchange": "market"})
+    # 미국은 DB에 실제 존재하는 최신 3개 연도를 찾아 공통 이름으로 맞춘다.
+    us_years = _annual_years(us.columns)
+    if us_years:
+        latest = us_years[0]
+        us = us.rename(columns={f"net_income_{latest}": "net_income",
+                                f"revenue_{latest}": "revenue",
+                                f"op_income_{latest}": "op_income", "exchange": "market"})
+        us["fiscal_year"] = us.get("fiscal_year", latest)
     if not sic.empty:
         us = us.merge(sic, on="cik", how="left")
     us["country"] = "US"
     us["business"] = us.get("sic_desc")           # 미국은 SEC 업종 상세를 '뭘 하는지'로 쓴다
     # 3년 매출·흑자전환 판정을 나라 무관하게 하려고 공통 컬럼으로 맞춘다 (연도명이 서로 다르다)
-    us["rev_y1"], us["rev_y2"], us["rev_y3"] = us.get("revenue_2023"), us.get("revenue_2024"), us["revenue"]
-    us["ni_prev"] = us.get("net_income_2024")
+    if len(us_years) >= 3:
+        us["rev_y1"], us["rev_y2"], us["rev_y3"] = (us.get(f"revenue_{y}") for y in reversed(us_years[:3]))
+    else:
+        us["rev_y1"], us["rev_y2"], us["rev_y3"] = pd.NA, pd.NA, us.get("revenue")
+    us["ni_prev"] = us.get(f"net_income_{us_years[1]}") if len(us_years) >= 2 else pd.NA
 
     kr["country"] = "KR"                          # market 은 이미 KOSPI/KOSDAQ
-    kr["rev_y1"], kr["rev_y2"], kr["rev_y3"] = kr.get("revenue_2023"), kr.get("revenue_prev"), kr["revenue"]
+    oldest_col = "revenue_oldest" if "revenue_oldest" in kr else "revenue_2023"
+    kr["rev_y1"], kr["rev_y2"], kr["rev_y3"] = kr.get(oldest_col), kr.get("revenue_prev"), kr["revenue"]
     kr["ni_prev"] = kr.get("net_income_prev")
+    if "fiscal_year" not in kr:
+        kr["fiscal_year"] = us_years[0] if us_years else pd.NA
 
     df = pd.concat([us, kr], ignore_index=True)
     if not px.empty:
@@ -108,14 +152,15 @@ def load_stocks() -> pd.DataFrame:
     df["rev_up_3y"] = (r1 > 0) & (r1 < r2) & (r2 < r3)                      # 매출 3년 연속 증가
     df["turnaround"] = (pd.to_numeric(df.ni_prev, errors="coerce") < 0) & \
                        (pd.to_numeric(df.net_income, errors="coerce") >= 0)  # 흑자전환(전기 적자→당기 흑자)
+    # 종목별로 적용 가능한 핵심 축만 완성도 분모로 삼는다.
+    core_cols = [c for _, c, *_ in CORE]
+    applicable = pd.DataFrame({c: metric_applicable(df, c) for c in core_cols})
+    present = df[core_cols].notna() & applicable
+    df["data_axes"] = present.sum(axis=1)
+    df["data_expected"] = applicable.sum(axis=1)
+    df["data_completeness"] = (df.data_axes / df.data_expected.replace(0, pd.NA) * 100).round()
+    df["financial_stale"] = pd.to_numeric(df.fiscal_year, errors="coerce") < expected_annual_year()
     return df.dropna(subset=["ticker"]).reset_index(drop=True)
-
-
-def _read(con, table):
-    try:
-        return pd.read_sql(f"select * from {table}", con)
-    except pd.errors.DatabaseError:               # 해당 수집기를 아직 안 돌린 경우
-        return pd.DataFrame()
 
 
 def available(df, metrics):
@@ -492,7 +537,7 @@ def load_history_kr(corp_code: str) -> pd.DataFrame:
     return parse_kr_history(reports)
 
 
-def weighted_score(pct, weights):
+def weighted_score(pct, weights, min_axes=1):
     """축별 백분위의 가중평균.
 
     값이 없는 축은 그 종목의 분모에서도 뺀다. 그냥 합치면 없는 축이 0점으로 들어가서
@@ -500,4 +545,18 @@ def weighted_score(pct, weights):
     """
     w = pd.Series({k: v for k, v in weights.items() if k in pct})
     p = pct[w.index]
-    return (p * w).sum(axis=1) / (p.notna() * w).sum(axis=1)
+    score = (p * w).sum(axis=1) / (p.notna() * w).sum(axis=1)
+    return score.where(p.notna().sum(axis=1) >= min_axes)
+
+
+def score_reason(pct_row, metrics=CORE, limit=2):
+    """백분위가 가장 좋은 축을 사람이 읽는 짧은 선정 이유로 바꾼다."""
+    labels = {col: label for label, col, *_ in metrics}
+    ranked = [(col, float(pct_row[col])) for col in labels
+              if col in pct_row and pd.notna(pct_row[col])]
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    parts = []
+    for col, percentile in ranked[:limit]:
+        top = max(1, min(100, round(100 - percentile)))
+        parts.append(f"{labels[col]} 상위 {top}%")
+    return " · ".join(parts) if parts else "계산 가능한 핵심 지표 부족"

@@ -10,9 +10,10 @@ import urllib.error
 import urllib.request
 
 import pandas as pd
+from quality import print_report, require_no_errors, validate_source
+from settings import DB
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-DB = "stocks.db"
 BATCH = 20            # spark 상한
 PAUSE = 0.3           # 야후 배려
 
@@ -79,6 +80,9 @@ def main():
 
     df = pd.DataFrame(rows).drop_duplicates("ticker")
     df["fetched_at"] = pd.Timestamp.now().isoformat(timespec="seconds")
+    findings = validate_source(df, "PRICE")
+    print_report("시세", findings, len(df))
+    require_no_errors(findings)
     with sqlite3.connect(DB) as con:
         df.to_sql("prices", con, if_exists="replace", index=False)
     print(f"\n{DB} · prices · {len(df):,}종목 저장 (시세 없음 {missed:,}종목)")

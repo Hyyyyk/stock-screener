@@ -15,9 +15,9 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
+from settings import DB
 
 UA = {"User-Agent": "stock-screener gusrkds96@gmail.com"}
-DB = "stocks.db"
 WORKERS = 4
 PER_REQUEST_PAUSE = 0.5        # 워커 4개 × 0.5초 → 약 8 req/s
 

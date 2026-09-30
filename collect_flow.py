@@ -14,8 +14,8 @@ import urllib.request
 from datetime import date
 
 import pandas as pd
+from settings import DB
 
-DB = "stocks.db"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 DAYS = 20                 # 최근 20거래일 누적
 PAUSE = 0.3               # 요청 사이 쉬는 시간

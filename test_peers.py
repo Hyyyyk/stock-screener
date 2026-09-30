@@ -1,7 +1,10 @@
 """비교 그룹 등수 자체 점검.  실행: python test_peers.py"""
 import pandas as pd
+from datetime import date
 
-from data import SHRINK_K, mid_pct, peer_pct, size_bucket
+from data import (SHRINK_K, expected_annual_year, metric_applicable, mid_pct,
+                  peer_pct, score_reason, size_bucket, weighted_score)
+from collect_us import latest_annual_year, recent_instant_periods
 
 # 1) 중간순위 백분위는 종목 수가 적어도 위아래가 대칭이다
 two = pd.DataFrame({"g": [0, 0], "v": [1.0, 2.0]})
@@ -32,5 +35,24 @@ assert in_parent < top_reit < 55, top_reit                      # 75점이 아�
 
 # 5) 비교 그룹을 끄면 전체 표본 등수 그대로
 assert peer_pct(df, "roe", True, by_peer=False)[58] == in_parent
+
+# 6) 공시 전인 1~3월에는 전전년, 4월부터는 전년을 최신 완료연도로 본다
+assert expected_annual_year(date(2027, 3, 31)) == 2025
+assert expected_annual_year(date(2027, 4, 1)) == 2026
+assert latest_annual_year(date(2027, 4, 1)) == 2026
+assert recent_instant_periods(date(2026, 9, 30)) == ["CY2026Q2I", "CY2026Q1I", "CY2025Q4I", "CY2025Q3I"]
+
+# 7) 미국 수급과 금융사 부채비율은 적용하지 않는다
+rules = pd.DataFrame({"country": ["US", "KR", "KR"],
+                      "sector": ["전자·반도체", "은행·증권", "전자·반도체"]})
+assert metric_applicable(rules, "flow_net").tolist() == [False, True, True]
+assert metric_applicable(rules, "debt_ratio").tolist() == [True, False, True]
+
+# 8) 적용하지 않는 축(NaN)은 점수 분모에서 빠지고, 선정 이유는 강한 축부터 설명한다
+scores = pd.DataFrame({"pbr": [90.0], "roe": [70.0], "debt_ratio": [None]})
+assert weighted_score(scores, {"pbr": 1, "roe": 1, "debt_ratio": 1}).iloc[0] == 80
+assert score_reason(scores.iloc[0]) == "PBR 상위 10% · ROE 상위 30%"
+one_axis = pd.DataFrame({"pbr": [99.0], "roe": [None]})
+assert pd.isna(weighted_score(one_axis, {"pbr": 1, "roe": 1}, min_axes=2).iloc[0])
 
 print("ok")

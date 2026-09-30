@@ -8,25 +8,50 @@ import json
 import sqlite3
 import time
 import urllib.request
-from pathlib import Path
+from datetime import date
 
 import pandas as pd
+from quality import print_report, require_no_errors, validate_source
+from settings import CACHE, DB
 
 # SEC 는 접속 주체를 밝히는 User-Agent 를 요구한다. 연락처는 바꿔도 된다.
 UA = {"User-Agent": "stock-screener gusrkds96@gmail.com"}
-CACHE = Path("cache")
-DB = "stocks.db"
 
-# 재무상태표(시점) 항목 - 최신 분기부터 훑어 처음 나오는 값을 쓴다
-INSTANT_PERIODS = ["CY2026Q2I", "CY2026Q1I", "CY2025Q4I", "CY2025Q3I"]
+def latest_annual_year(today=None):
+    """대부분의 사업보고서가 나온 최신 완료연도. 1~3월에는 전전년을 쓴다."""
+    today = today or date.today()
+    return today.year - (1 if today.month >= 4 else 2)
+
+
+def recent_instant_periods(today=None, count=4):
+    """아직 끝나지 않은 분기를 제외한 최근 SEC instant frame 이름."""
+    today = today or date.today()
+    quarter = (today.month - 1) // 3
+    year = today.year
+    if quarter == 0:
+        year, quarter = year - 1, 4
+    out = []
+    for _ in range(count):
+        out.append(f"CY{year}Q{quarter}I")
+        quarter -= 1
+        if quarter == 0:
+            year, quarter = year - 1, 4
+    return out
+
+
+# 실행 날짜를 기준으로 자동 선택한다. 재현 가능한 테스트를 위해 계산 함수는 위에 분리했다.
+LATEST_YEAR = latest_annual_year()
+YEARS = [f"CY{LATEST_YEAR - i}" for i in range(3)]
+INSTANT_PERIODS = recent_instant_periods()
+
+# 재무상태표(시점) 항목 - 최신 완료 분기부터 훑어 처음 나오는 값을 쓴다
 INSTANT = {
     "equity":      ("us-gaap", "StockholdersEquity", "USD"),
     "liabilities": ("us-gaap", "Liabilities", "USD"),
     "assets":      ("us-gaap", "Assets", "USD"),
     "shares":      ("dei", "EntityCommonStockSharesOutstanding", "shares"),
 }
-# 손익계산서(기간) 항목 - 성장률을 내려면 2개 연도가 필요하다
-YEARS = ["CY2025", "CY2024", "CY2023"]     # 2023 은 '매출 3년 연속 증가' 판정용
+# 손익계산서(기간) 항목 - 성장률과 3년 연속 매출 판정에 3개 연도가 필요하다
 ANNUAL = {
     "net_income": [("us-gaap", "NetIncomeLoss", "USD")],
     # 금융사 등은 '영업이익'을 보고하지 않는다. 세전이익을 대용으로 뒤에 붙인다.
@@ -99,17 +124,20 @@ def collect():
 
 def derive(df):
     """5축 중 주가가 필요 없는 것들을 여기서 계산한다. PBR 은 시세 붙일 때."""
+    latest, previous = str(LATEST_YEAR), str(LATEST_YEAR - 1)
     eq = df.equity.where(df.equity > 0)                   # 자본잠식이면 비율 지표가 무의미
     df["liabilities"] = df.liabilities.fillna(df.assets - df.equity)   # 부채 미보고분은 자산-자본으로
-    df["roe"] = df.net_income_2025 / eq * 100
-    df["roa"] = df.net_income_2025 / df.assets.where(df.assets > 0) * 100
+    df["roe"] = df[f"net_income_{latest}"] / eq * 100
+    df["roa"] = df[f"net_income_{latest}"] / df.assets.where(df.assets > 0) * 100
     df["debt_ratio"] = df.liabilities / eq * 100
-    df["opm"] = df.op_income_2025 / df.revenue_2025.where(df.revenue_2025 > 0) * 100
+    df["opm"] = df[f"op_income_{latest}"] / df[f"revenue_{latest}"].where(df[f"revenue_{latest}"] > 0) * 100
 
-    prev = df.op_income_2024.where(df.op_income_2024 > 0)  # 적자→흑자는 증가율이 무의미
-    df["op_growth"] = (df.op_income_2025 / prev - 1) * 100
-    prev_rev = df.revenue_2024.where(df.revenue_2024 > 0)
-    df["rev_growth"] = (df.revenue_2025 / prev_rev - 1) * 100
+    prev = df[f"op_income_{previous}"].where(df[f"op_income_{previous}"] > 0)
+    df["op_growth"] = (df[f"op_income_{latest}"] / prev - 1) * 100
+    prev_rev = df[f"revenue_{previous}"].where(df[f"revenue_{previous}"] > 0)
+    df["rev_growth"] = (df[f"revenue_{latest}"] / prev_rev - 1) * 100
+    df["fiscal_year"] = LATEST_YEAR
+    df["balance_period"] = INSTANT_PERIODS[0]
 
     # 전년 이익이 0에 가까우면 증가율이 수만 %로 튄다. 순위는 그대로 두고 표시만 자른다.
     df["op_growth"] = df.op_growth.clip(-100, 300)
@@ -121,6 +149,9 @@ def derive(df):
 def main():
     print("SEC EDGAR 수집 중...")
     df = derive(collect()).reset_index()
+    findings = validate_source(df, "US")
+    print_report("미국 재무", findings, len(df))
+    require_no_errors(findings)
     with sqlite3.connect(DB) as con:
         df.to_sql("us_fundamentals", con, if_exists="replace", index=False)
     print(f"\n{DB} · us_fundamentals · {len(df):,}개사 저장")

@@ -1,11 +1,13 @@
 """저평가 우량주 스크리너.  실행: streamlit run app.py"""
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 import os
 
 import data
+import detail_view
+import screener
+from settings import CAP_STEPS, FILTERS, PRESETS
 
 st.set_page_config(page_title="저평가주 스크리너", layout="wide")
 
@@ -16,28 +18,6 @@ try:
         os.environ["DART_API_KEY"] = st.secrets["DART_API_KEY"]
 except Exception:
     pass
-
-# 프리셋별 5축 가중치 (합이 1일 필요는 없음, 상대비율만 의미 있음)
-PRESETS = {
-    "균형":       {"pbr": 1.0, "roe": 1.0, "op_growth": 1.0, "debt_ratio": 0.7, "flow_net": 0.7},
-    "저평가 중시": {"pbr": 2.0, "roe": 1.0, "op_growth": 0.5, "debt_ratio": 1.0, "flow_net": 0.5},
-    "성장 중시":   {"pbr": 0.7, "roe": 1.2, "op_growth": 2.0, "debt_ratio": 0.5, "flow_net": 1.0},
-}
-
-CAP_STEPS = {"제한 없음": 0, "$50M": 5e7, "$100M": 1e8, "$300M": 3e8,
-             "$1B": 1e9, "$5B": 5e9, "$50B": 5e10}
-
-# 업종마다 정상 범위가 달라(은행 부채비율 중앙값 760%, 화학 40%) 절대값 하나로는
-# 업종이 통째로 걸러진다. 그래서 기본은 "비교 그룹 안에서 상위 몇 %" 로 거른다.
-# (단계명, 컬럼, 방향, 절대값 슬라이더(라벨,최소,최대,기본,간격), 그룹내 상위 % 기본값)
-FILTERS = [
-    ("① 싼가",       "pbr",        "max", ("PBR 상한 (배)",           0.2,  12.0,   1.5,  0.1), 30),
-    ("② 잘 버는가",   "roe",        "min", ("ROE 하한 (%)",          -30.0,  60.0,   8.0,  0.5), 50),
-    ("③ 크고 있는가", "op_growth",  "min", ("영업이익 증가율 하한 (%)", -100.0, 300.0,   0.0,  5.0), 50),
-    ("④ 안전한가",   "debt_ratio", "max", ("부채비율 상한 (%)",        10.0, 500.0, 150.0, 10.0), 50),
-    ("⑤ 남들도 사는가", "flow_net",  "min", ("수급 하한 (시총 대비 %)",   -5.0,   5.0,   0.0,  0.1), 50),
-]
-
 
 df = data.load_stocks()
 CORE = data.available(df, data.CORE)              # 값이 없는 축은 통째로 뺀다
@@ -50,14 +30,19 @@ if missing:
 
 # ---------------- 사이드바: 좁혀나가는 조건 ----------------
 with st.sidebar:
-    _px, _fl = data.data_asof()                  # 데이터 기준일을 맨 위에 표시
-    if _px or _fl:
+    fresh = data.data_freshness()                 # 소스별 기준일을 맨 위에 표시
+    _px, _fl, _fy = fresh["price"], fresh["flow"], fresh["fiscal_year"]
+    if _px or _fl or _fy:
         parts = []
+        if _fy:
+            parts.append(f"재무 {_fy}년")
         if _px:
             parts.append(f"시세 {str(_px)[:10]}")
         if _fl and len(str(_fl)) == 8:
             parts.append(f"수급 {str(_fl)[:4]}-{str(_fl)[4:6]}-{str(_fl)[6:8]}")
         st.caption("📅 " + " · ".join(parts))
+    if _fy and _fy < data.expected_annual_year():
+        st.warning(f"재무가 {_fy}년 기준으로 오래됐습니다. 재무 수집기를 다시 실행해 주세요.")
 
     st.header("어떻게 좁힐까")
     preset = st.radio("무엇을 더 볼까요", list(PRESETS))
@@ -88,7 +73,7 @@ with st.sidebar:
     st.divider()
     st.caption("이런 종목만 보기")
     only_up = st.checkbox("매출 3년 연속 증가", value=False,
-                          help="최근 3년(2023<2024<2025) 매출이 매년 늘어난 종목만.")
+                          help="DB에 저장된 최근 3개 연도의 매출이 매년 늘어난 종목만.")
     only_turn = st.checkbox("흑자전환 (작년 적자→올해 흑자)", value=False,
                             help="직전 연도는 순손실, 최근 연도는 순이익인 종목만.")
 
@@ -111,48 +96,27 @@ with st.sidebar:
         if col == "flow_net":
             st.caption("한국만 적용합니다. 미국은 일별 수급 데이터가 없어 이 단계를 건너뜁니다. "
                        "출처: 네이버 증권(비공식)")
+        if col == "debt_ratio":
+            st.caption("은행·보험은 부채 구조가 일반 기업과 달라 이 축을 점수와 필터에서 제외합니다.")
 
 # ---------------- 모집단과 비교 그룹 ----------------
-universe = df[df.market.isin(markets)]
-if drop_funds:
-    universe = universe[universe.kind.fillna("EQUITY") == "EQUITY"]
-if CAP_STEPS[cap_label]:
-    universe = universe[universe.market_cap_usd >= CAP_STEPS[cap_label]]   # 원화는 환율로 달러 환산해 비교
-if only_up:
-    universe = universe[universe.rev_up_3y]
-if only_turn:
-    universe = universe[universe.turnaround]
-universe = universe.assign(size_bucket=universe.groupby("country").market_cap.transform(data.size_bucket))
+universe = screener.prepare_universe(df, markets, CAP_STEPS[cap_label], drop_funds, only_up, only_turn)
 
 # 등수는 업종 필터를 걸기 전(universe) 기준으로 한 번만 매긴다.
 # 단계마다 다시 매기거나 업종으로 좁힌 뒤 매기면 "상위 30%" 의 모집단이 바뀌어 뜻이 달라진다.
-pct_all = pd.DataFrame({col: data.peer_pct(universe, col, big, by_sector) for _, col, _, big, _ in CORE})
-# 축 데이터가 나라 전체에 아예 없으면(수급 → 미국) 그 단계에서 걸러내지 않는다
-has_axis = {col: universe.groupby("country")[col].transform("count") > 0 for col in CORE_COLS}
+pct_all, applicable = screener.percentiles(universe, CORE, by_sector)
 
 # ---------------- 깔때기: 단계별로 몇 개가 걸러지는가 ----------------
 base = universe[universe.sector.isin(sectors)] if sectors else universe
-steps, cur = [("전체", base)], base
-for stage, col, direction, *_ in FILTERS:
-    if col not in cuts:
-        continue
-    v = cuts[col]
-    if by_sector:
-        keep = pct_all[col].loc[cur.index] >= 100 - v
-        if col == "roe" and roe_floor is not None:
-            keep &= cur.roe >= roe_floor
-    else:
-        keep = cur[col] <= v if direction == "max" else cur[col] >= v
-    # 값이 없는 종목은 판단 불가라 제외하되, 그 나라에 이 축 데이터가 아예 없으면 통과시킨다
-    cur = cur[keep.fillna(False) | ~has_axis[col].loc[cur.index]]
-    steps.append((stage, cur))
+steps = screener.apply_filters(base, FILTERS, cuts, pct_all, applicable, by_sector, roe_floor)
+cur = steps[-1][1]
 
 f = steps[-1][1]
 if f.empty:
     st.error("조건에 맞는 종목이 없습니다. 사이드바에서 조건을 풀어보세요.")
     st.stop()
 
-sc_all = data.weighted_score(pct_all, PRESETS[preset])      # 값이 없는 축(미국 수급)은 분모에서 뺀다
+sc_all = data.weighted_score(pct_all, PRESETS[preset], min_axes=2)  # 한 축만으로 높은 종합점수가 되지 않게 한다
 pct, f = pct_all.loc[f.index], f.assign(score=sc_all.loc[f.index])
 
 st.subheader(f"🏆 후보 {len(f):,}종목")
@@ -160,8 +124,10 @@ st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(u
            "백분위로 환산해 가중평균한 점수입니다. 100에 가까울수록 조건에 잘 맞습니다."
            if not by_sector else
            f"**{preset}** 기준 · **같은 나라·업종·규모 안에서** 백분위를 매겼습니다. "
-           "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다.")
+           "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다. "
+           "종합점수는 계산 가능한 축이 2개 이상일 때만 표시합니다.")
 view = f.sort_values("score", ascending=False).head(100)
+reasons = pct_all.loc[view.index].apply(data.score_reason, axis=1)
 show = pd.DataFrame({
     "순위": range(1, len(view) + 1),
     "티커": view.ticker.values,
@@ -171,14 +137,18 @@ show = pd.DataFrame({
     "업종": view.sector.values,
     "규모": view.size_bucket.values,
     "점수": view.score.values,
+    "데이터": view.data_completeness.values,
+    "선정 이유": reasons.values,
     **{label: view[col].values for label, col, _, _, _ in CORE},
 })
 st.caption("행을 **클릭**하면 바로 아래에 그 종목 상세가 펼쳐집니다.")
 event = st.dataframe(
-    show, use_container_width=True, hide_index=True, height=520,
+    show, width="stretch", hide_index=True, height=520,
     on_select="rerun", selection_mode="single-row", key="rank_sel",
     column_config={
         "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
+        "데이터": st.column_config.ProgressColumn("데이터 완성도", format="%.0f%%", min_value=0, max_value=100,
+                                                   help="해당 국가에서 제공되는 핵심 지표 중 값이 있는 비율"),
         "PBR": st.column_config.NumberColumn(format="%.2f배"),
         "ROE": st.column_config.NumberColumn(format="%.1f%%"),
         "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
@@ -189,129 +159,7 @@ event = st.dataframe(
 st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
                    "screener.csv", "text/csv")
 
-# ---------------- 상세: 순위표 클릭 또는 직접 검색 ----------------
-opts = sorted(df.ticker + "  " + df["name"])
-searched = st.selectbox("🔎 종목 직접 검색 — 순위·필터와 무관하게 아무 종목이나 (티커·종목명)",
-                        [""] + opts, index=0, placeholder="예: 005930.KS, 삼성전자, AAPL")
-if searched:                                       # 검색이 우선. 필터 밖 종목도 볼 수 있게 df 전체에서 찾는다
-    idx = df.index[df.ticker == searched.split("  ")[0]][0]
-elif event.selection.rows:
-    idx = view.index[event.selection.rows[0]]      # 순위표에서 클릭한 행
-else:
-    idx = None
-
-if idx is None:
-    st.info("👆 위 표에서 종목을 클릭하거나, 검색창에서 종목을 고르면 여기에 상세가 펼쳐집니다.")
-else:
-    row = df.loc[idx]
-    st.divider()
-    st.subheader(f"{row['name']}  ·  {row.ticker}  ·  {row.market}")
-    st.caption(" · ".join(str(x) for x in [row.get("sector"), row.get("size_bucket")] if pd.notna(x)))
-    summary = data.load_business(row.ticker)     # Yahoo 회사 소개(영어). 열 때만 실시간 조회
-    if summary:
-        st.markdown(f"🏢 {summary}")
-    else:                                        # 실패 시 KRX 주요제품 / SEC 업종 한 줄로 폴백
-        biz = row.get("business")
-        if pd.notna(biz) and str(biz).strip() not in ("", "-"):
-            st.markdown(f"🏢 **{biz}**")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**각 축이 어디에 서 있나** — "
-                    + ("같은 나라·업종·규모 안에서의 백분위" if by_sector else "시장 전체에서의 백분위")
-                    + " (100 = 최상위)")
-        if idx in pct_all.index:                 # 필터 모집단(universe) 안에 있을 때만 백분위 계산됨
-            st.bar_chart(pd.DataFrame({"백분위": [pct_all.at[idx, col] for _, col, _, _, _ in CORE]},
-                                      index=[l for l, _, _, _, _ in CORE]),
-                         horizontal=True, height=240)
-        else:
-            st.caption("검색으로 연 종목이라 현재 필터 모집단 밖입니다 — 업종 백분위는 생략하고 "
-                       "실제 값·실적·수급만 보여줍니다.")
-    with c2:
-        st.markdown("**실제 값**")
-        st.dataframe(pd.DataFrame(
-            [{"지표": l, "값": "–" if pd.isna(row[col]) else f"{row[col]:,.1f}{u}", "의미": desc}
-             for l, col, u, _, desc in CORE]), hide_index=True, use_container_width=True)
-
-    st.subheader("실적이 어떻게 흘러왔나")
-    kr = row.country == "KR"
-    source, unit = ("DART", "억 원") if kr else ("SEC", "백만 달러")
-    period = st.radio("기간", ["연간", "분기"], horizontal=True, key="hist_period",
-                      label_visibility="collapsed")
-    try:
-        if period == "분기":
-            h = (data.load_history_kr_quarter(row.corp_code) if kr
-                 else pd.DataFrame() if pd.isna(row.get("cik")) else data.load_history_us_quarter(row.cik))
-        else:
-            h = (data.load_history_kr(row.corp_code) if kr
-                 else pd.DataFrame() if pd.isna(row.get("cik")) else data.load_history(row.cik))
-    except Exception:                              # 네트워크 오류·차단. 캐시되지 않아 다시 열면 재시도한다
-        h = None
-        st.warning(f"{source} 응답을 받지 못했습니다. 잠시 뒤 다시 열어보세요.")
-    if h is None:
-        pass
-    elif h.empty:
-        st.warning(f"이 회사는 {source}에 표준 계정이 없어 추이를 만들 수 없습니다.")
-    else:
-        note = " · 분기는 당분기(3개월)" if period == "분기" else ""
-        if period == "분기" and not kr:
-            note += " · 미국은 분기 현금흐름 미제공(손익만)"
-        st.caption(f"단위: {unit}{note}")
-        # 분기 라벨("25 2Q")은 그대로, 연간은 "23년"으로 → 축이 숫자·세로가 아니라 카테고리로 깔끔
-        hy = (h.set_index("연도") if period == "분기"
-              else h.assign(연도=h["연도"].astype(str).str[2:] + "년").set_index("연도"))
-        cc1, cc2 = st.columns(2)
-        pnl = [c for c in ["매출액", "영업이익", "순이익"] if c in hy]
-        cfl = [c for c in ["영업CF", "투자CF", "재무CF"] if c in hy]
-        if pnl:
-            long = hy[pnl].reset_index().melt("연도", var_name="항목", value_name="값")
-            ymax, ymin = long["값"].max(), long["값"].min()
-            # 0선 위(양수)는 옅은 파랑, 아래(음수)는 옅은 빨강 배경으로 흑자·적자를 한눈에
-            pos = alt.Chart(pd.DataFrame({"y": [0], "y2": [max(ymax, 0)]})).mark_rect(
-                color="#3b82f6", opacity=0.06).encode(y="y:Q", y2="y2:Q")
-            neg = alt.Chart(pd.DataFrame({"y": [min(ymin, 0)], "y2": [0]})).mark_rect(
-                color="#e5484d", opacity=0.06).encode(y="y:Q", y2="y2:Q")
-            line = alt.Chart(long).mark_line(point=True).encode(
-                x=alt.X("연도:N", title=None, sort=list(hy.index)),
-                y=alt.Y("값:Q", title=None),
-                color=alt.Color("항목:N", title=None,
-                                scale=alt.Scale(domain=pnl,
-                                                range=["#1f4e9e", "#e5484d", "#5b8def"][:len(pnl)])),
-                tooltip=["연도", "항목", alt.Tooltip("값:Q", format=",.0f")])
-            cc1.altair_chart(pos + neg + line, use_container_width=True)
-        if cfl:
-            cc2.bar_chart(hy[cfl])
-            cc2.caption("영업에서 벌어(+) · 투자에 쓰고(−) · 재무로 조달·상환(−)한 실제 현금")
-        st.dataframe(hy.T.round(0), use_container_width=True)
-
-    if row.country == "KR":                        # 수급은 한국만(네이버). 미국은 일별 수급 없음
-        st.subheader("수급 — 외국인·기관")
-        fd = data.load_flow_daily(row.ticker.split(".")[0])
-        if fd.empty:
-            st.info("수급 데이터를 받지 못했습니다. 잠시 뒤 다시 열어보세요.")
-        else:
-            cols = st.columns(2)
-            for col, who, amt in zip(cols, ["외국인", "기관"], ["외인_억", "기관_억"]):
-                s3, s7 = fd[amt].tail(3).sum(), fd[amt].tail(7).sum()
-                stk = data.flow_streak(fd[amt])
-                label = (f"{abs(stk)}일 연속 순매수" if stk > 0
-                         else f"{abs(stk)}일 연속 순매도" if stk < 0 else "연속 없음")
-                col.metric(f"{who} · 3일 합", f"{s3:+,.0f}억", label, delta_color="off")
-                col.caption(f"7일 합 {s7:+,.0f}억")
-            tbl = pd.DataFrame({                     # 최신이 위로
-                "날짜": fd["날짜"],
-                "외인 순매수(주)": fd["외인_주"].map("{:+,.0f}".format),
-                "외인 금액(억)": fd["외인_억"].map("{:+,.1f}".format),
-                "기관 순매수(주)": fd["기관_주"].map("{:+,.0f}".format),
-                "기관 금액(억)": fd["기관_억"].map("{:+,.1f}".format),
-            })[::-1]
-            st.dataframe(tbl, hide_index=True, use_container_width=True)
-            st.caption("순매수(주) = 사들인 주식 수, 금액 = 그 금액(억) · 양수 순매수 / 음수 순매도")
-
-    with st.expander("보조 지표"):
-        st.dataframe(pd.DataFrame(
-            [{"지표": l, "값": "–" if pd.isna(row[col]) else f"{row[col]:,.1f}{u}", "의미": desc}
-             for l, col, u, desc in data.EXTRA]), hide_index=True, use_container_width=True)
+detail_view.render(df, view, event, pct_all, by_sector, CORE)
 
 st.caption("SEC EDGAR·DART 공시 재무, Yahoo 시세, 네이버 증권 수급(한국)을 정해진 규칙으로 정렬해 보여주는 도구입니다. "
            "투자 자문이 아니며, 투자 판단과 그 결과의 책임은 본인에게 있습니다.")

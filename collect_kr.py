@@ -16,17 +16,23 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from datetime import date
 
 import pandas as pd
+from quality import print_report, require_no_errors, validate_source
+from settings import CACHE, DB
 
-DB = "stocks.db"
-CACHE = Path("cache")
 UA = {"User-Agent": "stock-screener"}
 BATCH = 20               # fnlttMultiAcnt 상한
 SHARE_WORKERS = 2        # 주식수는 종목당 1호출 - 너무 빠르면 DART 가 연결을 끊는다
 SHARE_PAUSE = 0.3        # 워커 2개 × 0.3초 → 약 6 req/s
-YEAR = "2025"            # 사업보고서 기준연도 (응답에 전기=2024 가 함께 온다)
+def latest_annual_year(today=None):
+    """사업보고서 제출 시기를 고려한 최신 완료연도. 1~3월에는 전전년."""
+    today = today or date.today()
+    return today.year - (1 if today.month >= 4 else 2)
+
+
+YEAR = str(latest_annual_year())  # 사업보고서 기준연도 (응답에 전기가 함께 온다)
 ANNUAL_REPORT = "11011"  # 사업보고서
 KRX_LIST = "https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
 
@@ -264,9 +270,10 @@ def main():
           f"· 호출 {-(-len(targets) // BATCH):,}회")
 
     # 재무는 한 번 받으면 분기까지 안 바뀐다. 연도별로 캐시해 재실행 때 재사용한다.
-    got = _collect_annual(targets, YEAR)           # 당기(2025)·전기(2024)
-    got2023 = _collect_annual(targets, "2023")     # 매출 3년 연속 증가 판정용 (2023 당기)
-    return finish(targets, got, got2023)
+    got = _collect_annual(targets, YEAR)                  # 당기·전기
+    oldest_year = str(int(YEAR) - 2)
+    got_oldest = _collect_annual(targets, oldest_year)    # 매출 3년 연속 증가 판정용
+    return finish(targets, got, got_oldest)
 
 
 def _collect_annual(targets, year):
@@ -293,14 +300,15 @@ def _collect_annual(targets, year):
     return got
 
 
-def finish(targets, got, got2023):
+def finish(targets, got, got_oldest):
     rows = []
     for s, cc, nm, mk in targets:
         if cc not in got:
             continue
-        g23 = got2023.get(cc) or {}
+        oldest = got_oldest.get(cc) or {}
         rows.append({"stock_code": s, "corp_code": cc, "name": nm, "market": mk, **got[cc],
-                     "revenue_2023": g23.get("revenue"), "net_income_2023": g23.get("net_income")})
+                     "revenue_oldest": oldest.get("revenue"),
+                     "net_income_oldest": oldest.get("net_income"), "fiscal_year": int(YEAR)})
     if not rows:
         raise SystemExit("DART 에서 받은 재무가 없습니다. 차단이 풀린 뒤 다시 실행하세요.")
     df = derive(pd.DataFrame(rows))
@@ -321,6 +329,9 @@ def finish(targets, got, got2023):
         df.loc[todo, "shares"] = vals
         if share_fail:
             print(f"  주식수 실패 {share_fail:,}개 - 다시 실행하면 이어서 받습니다")
+    findings = validate_source(df, "KR")
+    print_report("한국 재무", findings, len(df))
+    require_no_errors(findings)
     with sqlite3.connect(DB) as con:
         df.to_sql("kr_fundamentals", con, if_exists="replace", index=False)
 
