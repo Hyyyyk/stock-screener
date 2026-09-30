@@ -189,15 +189,24 @@ event = st.dataframe(
 st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
                    "screener.csv", "text/csv")
 
-# ---------------- 클릭한 종목 상세 (표 바로 아래에 펼침) ----------------
-if not event.selection.rows:
-    st.info("👆 위 표에서 종목을 클릭하면 여기에 상세가 펼쳐집니다.")
+# ---------------- 상세: 순위표 클릭 또는 직접 검색 ----------------
+opts = sorted(df.ticker + "  " + df["name"])
+searched = st.selectbox("🔎 종목 직접 검색 — 순위·필터와 무관하게 아무 종목이나 (티커·종목명)",
+                        [""] + opts, index=0, placeholder="예: 005930.KS, 삼성전자, AAPL")
+if searched:                                       # 검색이 우선. 필터 밖 종목도 볼 수 있게 df 전체에서 찾는다
+    idx = df.index[df.ticker == searched.split("  ")[0]][0]
+elif event.selection.rows:
+    idx = view.index[event.selection.rows[0]]      # 순위표에서 클릭한 행
 else:
-    idx = view.index[event.selection.rows[0]]      # 클릭한 행의 원본 인덱스
-    row = f.loc[idx]
+    idx = None
+
+if idx is None:
+    st.info("👆 위 표에서 종목을 클릭하거나, 검색창에서 종목을 고르면 여기에 상세가 펼쳐집니다.")
+else:
+    row = df.loc[idx]
     st.divider()
     st.subheader(f"{row['name']}  ·  {row.ticker}  ·  {row.market}")
-    st.caption(" · ".join(str(x) for x in [row.sector, row.size_bucket] if pd.notna(x)))
+    st.caption(" · ".join(str(x) for x in [row.get("sector"), row.get("size_bucket")] if pd.notna(x)))
     summary = data.load_business(row.ticker)     # Yahoo 회사 소개(영어). 열 때만 실시간 조회
     if summary:
         st.markdown(f"🏢 {summary}")
@@ -211,9 +220,13 @@ else:
         st.markdown("**각 축이 어디에 서 있나** — "
                     + ("같은 나라·업종·규모 안에서의 백분위" if by_sector else "시장 전체에서의 백분위")
                     + " (100 = 최상위)")
-        st.bar_chart(pd.DataFrame({"백분위": [pct.at[idx, col] for _, col, _, _, _ in CORE]},
-                                  index=[l for l, _, _, _, _ in CORE]),
-                     horizontal=True, height=240)
+        if idx in pct_all.index:                 # 필터 모집단(universe) 안에 있을 때만 백분위 계산됨
+            st.bar_chart(pd.DataFrame({"백분위": [pct_all.at[idx, col] for _, col, _, _, _ in CORE]},
+                                      index=[l for l, _, _, _, _ in CORE]),
+                         horizontal=True, height=240)
+        else:
+            st.caption("검색으로 연 종목이라 현재 필터 모집단 밖입니다 — 업종 백분위는 생략하고 "
+                       "실제 값·실적·수급만 보여줍니다.")
     with c2:
         st.markdown("**실제 값**")
         st.dataframe(pd.DataFrame(
