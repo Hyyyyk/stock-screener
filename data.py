@@ -227,6 +227,37 @@ def load_business(ticker: str) -> str | None:
         return None                               # 차단·형식변경 등 - 화면은 KRX/SEC 한 줄로 폴백
 
 
+@st.cache_data(ttl=1800, show_spinner="수급을 받는 중…")
+def load_flow_daily(stock_code: str, days=12) -> pd.DataFrame:
+    """한국 종목 일별 외국인·기관 순매수(억 원 = 순매수량×종가). 오래된→최신 순. 열 때만 네이버 조회."""
+    from collect_flow import to_int
+
+    url = f"https://m.stock.naver.com/api/stock/{stock_code}/trend?pageSize={days}"
+    try:
+        rows = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=YAHOO_UA), timeout=15))
+    except Exception:
+        return pd.DataFrame()
+    recs = []
+    for r in rows:
+        c, f, o = (to_int(r.get(k)) for k in ("closePrice", "foreignerPureBuyQuant", "organPureBuyQuant"))
+        if None in (c, f, o):
+            continue
+        d = str(r.get("bizdate", ""))
+        recs.append({"날짜": f"{d[4:6]}/{d[6:8]}", "외국인": f * c / 1e8, "기관": o * c / 1e8})
+    return pd.DataFrame(recs[::-1])                # 네이버는 최신이 앞 → 뒤집어 시간순
+
+
+def flow_streak(series):
+    """최신(마지막)부터 같은 방향으로 며칠 연속인지. +N 순매수 연속, -N 순매도 연속, 0 없음."""
+    n, last = 0, 0
+    for v in reversed(list(series)):
+        sign = 1 if v > 0 else -1 if v < 0 else 0
+        if sign == 0 or (last and sign != last):
+            break
+        n, last = n + 1, sign
+    return n * last
+
+
 def money(v, currency="USD"):
     """통화가 섞일 예정이라 시가총액은 문자열로 통일해 보여준다."""
     if pd.isna(v):
