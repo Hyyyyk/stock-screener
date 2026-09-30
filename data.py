@@ -243,7 +243,9 @@ def load_flow_daily(stock_code: str, days=12) -> pd.DataFrame:
         if None in (c, f, o):
             continue
         d = str(r.get("bizdate", ""))
-        recs.append({"날짜": f"{d[4:6]}/{d[6:8]}", "외국인": f * c / 1e8, "기관": o * c / 1e8})
+        recs.append({"날짜": f"{d[4:6]}/{d[6:8]}",
+                     "외인_주": f, "외인_억": f * c / 1e8,     # 순매수 주식수 · 금액(억)
+                     "기관_주": o, "기관_억": o * c / 1e8})
     return pd.DataFrame(recs[::-1])                # 네이버는 최신이 앞 → 뒤집어 시간순
 
 

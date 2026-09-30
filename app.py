@@ -272,21 +272,28 @@ else:
         st.dataframe(hy.T.round(0), use_container_width=True)
 
     if row.country == "KR":                        # 수급은 한국만(네이버). 미국은 일별 수급 없음
-        st.subheader("수급 — 외국인·기관 순매수")
+        st.subheader("수급 — 외국인·기관")
         fd = data.load_flow_daily(row.ticker.split(".")[0])
         if fd.empty:
             st.info("수급 데이터를 받지 못했습니다. 잠시 뒤 다시 열어보세요.")
         else:
             cols = st.columns(2)
-            for col, who in zip(cols, ["외국인", "기관"]):
-                s3, s7 = fd[who].tail(3).sum(), fd[who].tail(7).sum()
-                stk = data.flow_streak(fd[who])
+            for col, who, amt in zip(cols, ["외국인", "기관"], ["외인_억", "기관_억"]):
+                s3, s7 = fd[amt].tail(3).sum(), fd[amt].tail(7).sum()
+                stk = data.flow_streak(fd[amt])
                 label = (f"{abs(stk)}일 연속 순매수" if stk > 0
                          else f"{abs(stk)}일 연속 순매도" if stk < 0 else "연속 없음")
                 col.metric(f"{who} · 3일 합", f"{s3:+,.0f}억", label, delta_color="off")
                 col.caption(f"7일 합 {s7:+,.0f}억")
-            st.bar_chart(fd.set_index("날짜")[["외국인", "기관"]])
-            st.caption("일별 순매수 금액(억 원) · 양수 = 순매수, 음수 = 순매도")
+            tbl = pd.DataFrame({                     # 최신이 위로
+                "날짜": fd["날짜"],
+                "외인 순매수(주)": fd["외인_주"].map("{:+,.0f}".format),
+                "외인 금액(억)": fd["외인_억"].map("{:+,.1f}".format),
+                "기관 순매수(주)": fd["기관_주"].map("{:+,.0f}".format),
+                "기관 금액(억)": fd["기관_억"].map("{:+,.1f}".format),
+            })[::-1]
+            st.dataframe(tbl, hide_index=True, use_container_width=True)
+            st.caption("순매수(주) = 사들인 주식 수, 금액 = 그 금액(억) · 양수 순매수 / 음수 순매도")
 
     with st.expander("보조 지표"):
         st.dataframe(pd.DataFrame(
