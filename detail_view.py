@@ -68,6 +68,13 @@ def _render_trend_badge(row):
     detail = f"52주 고점 대비 {d_hi:+.0f}% · 저점 대비 {d_lo:+.0f}%"
     (st.success if label == "상승 추세" else st.warning if label == "약세" else st.info)(
         f"{icon} 추세: **{label}** — {detail}")
+    r3, r6 = row.get("ret_3m"), row.get("ret_6m")
+    parts = []
+    if pd.notna(r3): parts.append(f"3개월 {r3:+.0f}%")
+    if pd.notna(r6): parts.append(f"6개월 {r6:+.0f}%")
+    if parts:                                       # RS 재료: 최근 수익률(순위는 목록 표의 RS 열)
+        st.caption("📊 최근 수익률(RS 재료): " + " · ".join(parts) +
+                   " — 같은 나라 안 순위(RS)는 목록 표의 RS 열에서 봅니다.")
 
 
 def _render_price(row):

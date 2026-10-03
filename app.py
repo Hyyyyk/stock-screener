@@ -81,6 +81,10 @@ with st.sidebar:
                              help="52주 고점 대비 -25% 이내 그리고 저점 대비 +30% 이상인 종목만. "
                                   "점수(가치·성장)는 그대로 두고 '시점'만 덧씌우는 필터입니다. "
                                   "미너비니 추세 템플릿의 가격 위치 조건 일부 — 제 제안 기준이라 백테스트 미검증.")
+    only_rs = st.checkbox("📊 RS(상대강도) 상위 30%만", value=False,
+                          help="같은 나라 종목 중 최근 3·6개월 수익률 순위 상위 30%만. "
+                               "오닐·미너비니의 상대강도 개념 — 점수는 그대로 두는 '시점' 오버레이. "
+                               "제 제안 기준(최근 3개월 2배 가중)이라 백테스트 미검증.")
     _wl = watchlist.load()
     only_watch = st.checkbox(f"⭐ 관심종목만 보기 ({len(_wl)})", value=False,
                              help="종목 상세의 ⭐ 버튼으로 담은 종목만. 등수 조건은 건너뛰고 "
@@ -129,11 +133,18 @@ else:
         st.error("조건에 맞는 종목이 없습니다. 사이드바에서 조건을 풀어보세요.")
         st.stop()
 
+rs_all = data.relative_strength(universe)          # 같은 나라 안 수익률 순위(0~100), 점수와 별개
 if only_trend and not only_watch:                 # 시점 오버레이: 점수·순위는 그대로, 상승 추세만 남긴다
     f = f[data.trend_label(f) == "상승 추세"]
     if f.empty:
         st.warning("가치·성장 조건은 통과했지만 '상승 추세 구간'에 든 종목이 없습니다. "
                    "추세 양호 필터를 끄거나 종목 조건을 풀어보세요.")
+        st.stop()
+if only_rs and not only_watch:                    # RS 상위 30%(백분위 70↑)만
+    f = f[rs_all.reindex(f.index) >= 70]
+    if f.empty:
+        st.warning("가치·성장 조건은 통과했지만 RS(상대강도) 상위 30%에 든 종목이 없습니다. "
+                   "RS 필터를 끄거나 종목 조건을 풀어보세요.")
         st.stop()
 
 sc_all = data.weighted_score(pct_all, PRESETS[preset], min_axes=2)  # 한 축만으로 높은 종합점수가 되지 않게 한다
@@ -213,6 +224,7 @@ else:
         "규모": view.size_bucket.values,
         "점수": view.score.values,
         "추세": data.trend_label(view).values,
+        "RS": rs_all.reindex(view.index).values,
         "데이터": view.data_completeness.values,
         **{label: view[col].values for label, col, _, _, _ in CORE},
     })
@@ -220,6 +232,8 @@ else:
         "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
         "추세": st.column_config.TextColumn(help="52주 고·저 대비 위치 · 상승 추세/조정 중/약세 "
                                                  "(미너비니 가격조건 일부, 제 제안 기준)"),
+        "RS": st.column_config.NumberColumn(format="%.0f", help="상대강도 — 같은 나라 안 최근 3·6개월 "
+                                                               "수익률 순위(0~100, 높을수록 강함). 오닐·미너비니."),
         "데이터": st.column_config.ProgressColumn("데이터 완성도", format="%.0f%%", min_value=0, max_value=100,
                                                    help="해당 국가에서 제공되는 핵심 지표 중 값이 있는 비율"),
         **metric_cfg,

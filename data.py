@@ -123,11 +123,12 @@ def load_stocks() -> pd.DataFrame:
 
     df = pd.concat([us, kr], ignore_index=True)
     if not px.empty:
-        df = df.merge(px[["ticker", "price", "currency", "change_pct", "high52", "low52", "kind"]],
-                      on="ticker", how="left")
+        cols = ["ticker", "price", "currency", "change_pct", "high52", "low52", "kind"]
+        cols += [c for c in ("ret_3m", "ret_6m") if c in px]   # 예전 prices(ret 없음)여도 안 깨지게
+        df = df.merge(px[cols], on="ticker", how="left")
     if not flows.empty:
         df = df.merge(flows[["ticker", "flow_net_amt", "foreign_hold_ratio", "flow_asof"]], on="ticker", how="left")
-    for col in ["price", "currency", "change_pct", "high52", "low52", "kind",
+    for col in ["price", "currency", "change_pct", "high52", "low52", "kind", "ret_3m", "ret_6m",
                 "sector", "sic_desc", "business", "cik", "flow_net_amt", "foreign_hold_ratio", "flow_asof"]:
         if col not in df:
             df[col] = pd.NA
@@ -606,3 +607,16 @@ def trend_label(df):
     label[ok & above30 & ~within25] = "조정 중"
     label[ok & ~above30] = "약세"
     return label
+
+
+# 상대강도(RS): 오닐·미너비니가 쓰는 "시장 대비 얼마나 센가". 절대 수익률이 아니라
+# 같은 나라 종목들 사이의 '순위'다(한·미는 통화·국면이 달라 섞지 않는다).
+# 최근 3개월에 2배 가중한 3·6개월 수익률을 블렌딩(제 제안). 둘 다 없으면 <NA>(판단 유보).
+def relative_strength(df):
+    """RS 백분위 Series(0~100, 높을수록 강함). 같은 country 안에서 순위."""
+    r3, r6 = df.get("ret_3m"), df.get("ret_6m")
+    if r3 is None or r6 is None:
+        return pd.Series(float("nan"), index=df.index)
+    r3, r6 = pd.to_numeric(r3, errors="coerce"), pd.to_numeric(r6, errors="coerce")
+    raw = 2 * r3.fillna(r6) + r6.fillna(r3)        # 한쪽만 있으면 그 값으로 메움, 둘 다 없으면 NaN
+    return raw.groupby(df.country).rank(pct=True) * 100

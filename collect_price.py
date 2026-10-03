@@ -19,9 +19,13 @@ PAUSE = 0.3           # 야후 배려
 
 
 def spark(symbols):
-    """[{symbol, price, ...}] - 없는 티커는 응답에서 그냥 빠진다."""
+    """[{symbol, price, ret_3m, ...}] - 없는 티커는 응답에서 그냥 빠진다.
+
+    range=6mo 로 받아 최신가(meta)와 함께 일별 종가 배열에서 3·6개월 수익률(RS 재료)을 뽑는다.
+    당일 등락은 마지막 두 종가로 계산해 range 와 무관하게 '하루치' 의미를 유지한다.
+    """
     url = ("https://query1.finance.yahoo.com/v7/finance/spark?symbols="
-           + ",".join(symbols) + "&range=1d&interval=1d")
+           + ",".join(symbols) + "&range=6mo&interval=1d")
     for attempt in range(3):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
@@ -38,17 +42,28 @@ def spark(symbols):
 
     out = []
     for item in results:
-        m = item["response"][0]["meta"]
-        prev = m.get("chartPreviousClose")
+        resp = item["response"][0]
+        m = resp["meta"]
         price = m.get("regularMarketPrice")
         if price is None:
             continue
+        closes = [c for c in ((resp.get("indicators", {}).get("quote", [{}])[0].get("close")) or [])
+                  if c is not None]
+        n = len(closes)
+        prev = closes[-2] if n >= 2 else m.get("chartPreviousClose")
+
+        def ret(back):                              # back 거래일 전 대비 수익률(%)
+            i = n - 1 - back
+            return (closes[-1] / closes[i] - 1) * 100 if 0 <= i < n and closes[i] else None
+
         out.append({
             "ticker": m["symbol"], "price": price, "currency": m.get("currency"),
             "prev_close": prev,
             "change_pct": (price / prev - 1) * 100 if prev else None,
             "high52": m.get("fiftyTwoWeekHigh"), "low52": m.get("fiftyTwoWeekLow"),
             "volume": m.get("regularMarketVolume"),
+            "ret_3m": ret(63),                      # ≈ 3개월(63거래일)
+            "ret_6m": (closes[-1] / closes[0] - 1) * 100 if n >= 2 and closes[0] else None,  # 받은 범위 전체
             "kind": m.get("instrumentType"),      # EQUITY / ETF / … - ETF 를 걸러내려고 받는다
         })
     return out
