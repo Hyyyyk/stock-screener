@@ -589,3 +589,20 @@ def interpret(row):
 
     head = ", ".join(strong[:2]) if strong else "두드러지는 강점은 적음"
     return head + (" — 주의: " + ", ".join(weak[:2]) if weak else "")
+
+
+# 추세 위치: 52주 고·저 대비 어디에 있나 → 상승 추세 구간인가.
+# 미너비니 '추세 템플릿' 8대 기준 중 가격 위치 두 가지(고점 -25% 이내 / 저점 +30% 이상)만 쓴
+# 부분집합이다(이동평균·거래량은 빠짐). 임계값은 제 제안이며, 유효성은 백테스트로 검증해야 한다.
+# price·high52·low52 가 다 있어야 하고 없으면 판단 유보(<NA>)로 둔다.
+def trend_label(df):
+    """행별 추세 라벨 Series: 상승 추세 / 조정 중 / 약세 / <NA>(유보)."""
+    p, hi, lo = df.price, df.high52, df.low52
+    ok = p.notna() & hi.notna() & lo.notna() & (hi > 0) & (lo > 0)
+    within25 = p >= 0.75 * hi            # 52주 고점 대비 -25% 이내
+    above30 = p >= 1.30 * lo             # 52주 저점 대비 +30% 이상
+    label = pd.Series(pd.NA, index=df.index, dtype="object")
+    label[ok & within25 & above30] = "상승 추세"
+    label[ok & above30 & ~within25] = "조정 중"
+    label[ok & ~above30] = "약세"
+    return label

@@ -37,6 +37,7 @@ def render(df, view, event, pct_all, by_sector, core):
     if row.get("financial_stale", False):
         st.warning("이 종목의 재무 데이터가 기대 기준연도보다 오래됐습니다. 점수를 참고용으로만 보세요.")
     st.info("🔎 " + data.interpret(row))
+    _render_trend_badge(row)
     summary = data.load_business(row.ticker)
     if summary:
         st.markdown(f"🏢 {summary}")
@@ -54,6 +55,19 @@ def render(df, view, event, pct_all, by_sector, core):
         st.dataframe(pd.DataFrame(
             [{"지표": label, "값": "–" if pd.isna(row[col]) else f"{row[col]:,.1f}{unit}", "의미": desc}
              for label, col, unit, desc in data.EXTRA]), hide_index=True, width="stretch")
+
+
+def _render_trend_badge(row):
+    """52주 고·저 대비 위치로 추세 구간을 한 줄로 (미너비니 가격조건 일부, 제 제안 기준)."""
+    label = data.trend_label(pd.DataFrame([row])).iloc[0]
+    if pd.isna(label):
+        return
+    p, hi, lo = row.price, row.high52, row.low52
+    d_hi, d_lo = (p / hi - 1) * 100, (p / lo - 1) * 100
+    icon = {"상승 추세": "📈", "조정 중": "↔️", "약세": "📉"}[label]
+    detail = f"52주 고점 대비 {d_hi:+.0f}% · 저점 대비 {d_lo:+.0f}%"
+    (st.success if label == "상승 추세" else st.warning if label == "약세" else st.info)(
+        f"{icon} 추세: **{label}** — {detail}")
 
 
 def _render_price(row):
