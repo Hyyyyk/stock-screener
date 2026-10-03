@@ -136,34 +136,60 @@ st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(u
            "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다. "
            "종합점수는 계산 가능한 축이 2개 이상일 때만 표시합니다.")
 view = f.sort_values("score", ascending=False).head(100)
-reasons = pct_all.loc[view.index].apply(data.score_reason, axis=1)
-show = pd.DataFrame({
-    "순위": range(1, len(view) + 1),
-    "티커": view.ticker.values,
-    "종목": view["name"].values,
-    "거래소": view.market.values,
-    "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
-    "업종": view.sector.values,
-    "규모": view.size_bucket.values,
-    "점수": view.score.values,
-    "데이터": view.data_completeness.values,
-    "선정 이유": reasons.values,
-    **{label: view[col].values for label, col, _, _, _ in CORE},
-})
-st.caption("행을 **클릭**하면 바로 아래에 그 종목 상세가 펼쳐집니다.")
-event = st.dataframe(
-    show, width="stretch", hide_index=True, height=520,
-    on_select="rerun", selection_mode="single-row", key="rank_sel",
-    column_config={
+metric_cfg = {                                      # 두 표(랭킹·대시보드)가 함께 쓰는 지표 서식
+    "PBR": st.column_config.NumberColumn(format="%.2f배"),
+    "ROE": st.column_config.NumberColumn(format="%.1f%%"),
+    "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
+    "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
+    "수급": st.column_config.NumberColumn(format="%+.2f%%"),
+}
+if only_watch:                                      # 관심종목은 주가 중심 대시보드로 본다
+    drawdown = (view.price / view.high52 - 1) * 100  # 52주 고점에서 얼마나 내려와 있나(음수)
+    show = pd.DataFrame({
+        "티커": view.ticker.values,
+        "종목": view["name"].values,
+        "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
+        "현재가": view.price.values,
+        "당일%": view.change_pct.values,
+        "52주高대비": drawdown.values,
+        "점수": view.score.values,
+        **{label: view[col].values for label, col, _, _, _ in CORE},
+    })
+    col_cfg = {
+        "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
+        "현재가": st.column_config.NumberColumn(format="%.2f", help="통화는 국가 기준(🇰🇷 원 · 🇺🇸 달러)"),
+        "당일%": st.column_config.NumberColumn(format="%+.2f%%"),
+        "52주高대비": st.column_config.NumberColumn(format="%+.1f%%",
+                                                    help="52주 최고가 대비 현재가 위치 · 0에 가까울수록 고점 부근, 음수가 클수록 많이 내려옴"),
+        **metric_cfg,
+    }
+    st.caption("담아둔 종목의 **주가·점수·지표**를 한눈에. 행을 **클릭**하면 아래에 상세가 펼쳐집니다.")
+else:
+    reasons = pct_all.loc[view.index].apply(data.score_reason, axis=1)
+    show = pd.DataFrame({
+        "순위": range(1, len(view) + 1),
+        "티커": view.ticker.values,
+        "종목": view["name"].values,
+        "거래소": view.market.values,
+        "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
+        "업종": view.sector.values,
+        "규모": view.size_bucket.values,
+        "점수": view.score.values,
+        "데이터": view.data_completeness.values,
+        "선정 이유": reasons.values,
+        **{label: view[col].values for label, col, _, _, _ in CORE},
+    })
+    col_cfg = {
         "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
         "데이터": st.column_config.ProgressColumn("데이터 완성도", format="%.0f%%", min_value=0, max_value=100,
                                                    help="해당 국가에서 제공되는 핵심 지표 중 값이 있는 비율"),
-        "PBR": st.column_config.NumberColumn(format="%.2f배"),
-        "ROE": st.column_config.NumberColumn(format="%.1f%%"),
-        "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
-        "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
-        "수급": st.column_config.NumberColumn(format="%+.2f%%"),
-    },
+        **metric_cfg,
+    }
+    st.caption("행을 **클릭**하면 바로 아래에 그 종목 상세가 펼쳐집니다.")
+event = st.dataframe(
+    show, width="stretch", hide_index=True, height=520,
+    on_select="rerun", selection_mode="single-row", key="rank_sel",
+    column_config=col_cfg,
 )
 st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
                    "screener.csv", "text/csv")
