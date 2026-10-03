@@ -135,6 +135,33 @@ st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(u
            f"**{preset}** 기준 · **같은 나라·업종·규모 안에서** 백분위를 매겼습니다. "
            "한국 소형 반도체는 한국 소형 반도체끼리 겨루고, 그런 종목이 적으면 한국 소형주 전체와 섞습니다. "
            "종합점수는 계산 가능한 축이 2개 이상일 때만 표시합니다.")
+
+if not only_watch:                                  # 숲 보기: 지금 어느 업종이 전반적으로 싼가·좋은가
+    with st.expander("🗺 지금 시장 어디가 싼가 — 업종별 요약", expanded=False):
+        grp = universe.assign(score=sc_all).dropna(subset=["score"])
+        summary = (grp.groupby(["country", "sector"])
+                   .agg(종목수=("ticker", "size"), 평균점수=("score", "mean"),
+                        PBR중앙=("pbr", "median"), ROE중앙=("roe", "median"),
+                        수급중앙=("flow_net", "median"))
+                   .reset_index())
+        summary = summary[summary.종목수 >= 3]       # 표본 3개 미만 그룹은 노이즈라 뺀다
+        if summary.empty:
+            st.caption("요약할 만큼 종목이 모이는 업종이 없습니다. 거래소·시총 조건을 넓혀보세요.")
+        else:
+            summary["국가"] = summary.country.map({"US": "🇺🇸", "KR": "🇰🇷"})
+            summary = summary.sort_values("평균점수", ascending=False)
+            st.caption("거래소·시총 필터 안에서 **종목 3개 이상인 업종만**, 평균점수 높은 순. "
+                       "= 지금 조건에 전반적으로 잘 맞는 업종. (업종 안 개별 종목은 아래 표에서)")
+            st.dataframe(
+                summary[["국가", "sector", "종목수", "평균점수", "PBR중앙", "ROE중앙", "수급중앙"]]
+                .rename(columns={"sector": "업종"}),
+                hide_index=True, width="stretch", column_config={
+                    "평균점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
+                    "PBR중앙": st.column_config.NumberColumn(format="%.2f배"),
+                    "ROE중앙": st.column_config.NumberColumn(format="%.1f%%"),
+                    "수급중앙": st.column_config.NumberColumn(format="%+.2f%%"),
+                })
+
 view = f.sort_values("score", ascending=False).head(100)
 metric_cfg = {                                      # 두 표(랭킹·대시보드)가 함께 쓰는 지표 서식
     "PBR": st.column_config.NumberColumn(format="%.2f배"),
