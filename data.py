@@ -560,3 +560,32 @@ def score_reason(pct_row, metrics=CORE, limit=2):
         top = max(1, min(100, round(100 - percentile)))
         parts.append(f"{labels[col]} 상위 {top}%")
     return " · ".join(parts) if parts else "계산 가능한 핵심 지표 부족"
+
+
+# 저평가 해석 규칙: (실제 값 기준) 강점·약점 한 줄.  임계값은 상대(백분위)가 아닌 절대 기준이라
+# 검색으로 연 모집단 밖 종목도 그대로 해석된다. 투자 자문이 아니라 숫자를 말로 풀어주는 것뿐이다.
+def interpret(row):
+    """종목의 실제 지표를 읽어 '싸고 잘 벌지만 성장이 꺾였다' 식 한 줄 해석을 만든다."""
+    ok = lambda x: x is not None and pd.notna(x)
+    pbr, roe = row.get("pbr"), row.get("roe")
+    growth, debt, flow = row.get("op_growth"), row.get("debt_ratio"), row.get("flow_net")
+    strong, weak = [], []
+
+    if ok(pbr):
+        if pbr < 1:   strong.append(f"순자산보다 싼 가격(PBR {pbr:.2f})")
+        elif pbr > 5: weak.append(f"순자산 대비 비쌈(PBR {pbr:.1f})")
+    if ok(roe):
+        if roe >= 15:  strong.append(f"자본 대비 잘 번다(ROE {roe:.0f}%)")
+        elif roe < 5:  weak.append(f"수익성이 낮다(ROE {roe:.0f}%)")
+    if ok(growth):
+        if growth >= 20: strong.append(f"이익이 빠르게 큰다(영업익 +{growth:.0f}%)")
+        elif growth < 0: weak.append(f"영업이익이 줄고 있다({growth:.0f}%)")
+    if ok(debt):
+        if debt <= 50:    strong.append(f"빚이 적어 안전(부채 {debt:.0f}%)")
+        elif debt >= 200: weak.append(f"부채가 많다({debt:.0f}%)")
+    if ok(flow):
+        if flow > 0.1:    strong.append("외국인·기관이 사는 중")
+        elif flow < -0.1: weak.append("외국인·기관이 파는 중")
+
+    head = ", ".join(strong[:2]) if strong else "두드러지는 강점은 적음"
+    return head + (" — 주의: " + ", ".join(weak[:2]) if weak else "")
