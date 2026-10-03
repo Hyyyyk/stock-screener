@@ -85,6 +85,10 @@ with st.sidebar:
                           help="같은 나라 종목 중 최근 3·6개월 수익률 순위 상위 30%만. "
                                "오닐·미너비니의 상대강도 개념 — 점수는 그대로 두는 '시점' 오버레이. "
                                "제 제안 기준(최근 3개월 2배 가중)이라 백테스트 미검증.")
+    only_graham = st.checkbox("🛡 그레이엄 적정가 아래만 (안전마진)", value=False,
+                              help="그레이엄 수 √(22.5·EPS·BPS)보다 현재가가 싼 종목만. "
+                                   "흑자·자본 양(+) 기업에만 적용, 금융업·적자는 제외됩니다. "
+                                   "그레이엄의 방어적 투자자 어림값 — 성장주엔 지나치게 보수적일 수 있습니다.")
     _wl = watchlist.load()
     only_watch = st.checkbox(f"⭐ 관심종목만 보기 ({len(_wl)})", value=False,
                              help="종목 상세의 ⭐ 버튼으로 담은 종목만. 등수 조건은 건너뛰고 "
@@ -145,6 +149,12 @@ if only_rs and not only_watch:                    # RS 상위 30%(백분위 70�
     if f.empty:
         st.warning("가치·성장 조건은 통과했지만 RS(상대강도) 상위 30%에 든 종목이 없습니다. "
                    "RS 필터를 끄거나 종목 조건을 풀어보세요.")
+        st.stop()
+if only_graham and not only_watch:                # 그레이엄 적정가 아래(안전마진 +)만 — 금융·적자는 자동 제외
+    f = f[(data.graham(f).margin > 0) & ~f.sector.isin(data.FINANCIAL_SECTORS)]
+    if f.empty:
+        st.warning("조건을 통과한 종목 중 그레이엄 적정가 아래(안전마진 +)인 것이 없습니다. "
+                   "안전마진 필터를 끄거나 종목 조건을 풀어보세요.")
         st.stop()
 
 sc_all = data.weighted_score(pct_all, PRESETS[preset], min_axes=2)  # 한 축만으로 높은 종합점수가 되지 않게 한다

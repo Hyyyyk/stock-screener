@@ -48,6 +48,7 @@ def render(df, view, event, pct_all, by_sector, core):
 
     _render_price(row)
     _render_metrics(row, idx, pct_all, by_sector, core)
+    _render_graham(row)
     _render_history(row)
     if row.country == "KR":
         _render_flow(row)
@@ -55,6 +56,30 @@ def render(df, view, event, pct_all, by_sector, core):
         st.dataframe(pd.DataFrame(
             [{"지표": label, "값": "–" if pd.isna(row[col]) else f"{row[col]:,.1f}{unit}", "의미": desc}
              for label, col, unit, desc in data.EXTRA]), hide_index=True, width="stretch")
+
+
+def _render_graham(row):
+    """그레이엄 수 기준 적정가·안전마진 (방어적 투자자용 어림, 그의 '엄지손가락 규칙')."""
+    st.subheader("🛡 안전마진 — 그레이엄 수")
+    if row.get("sector") in data.FINANCIAL_SECTORS:
+        st.info("은행·보험 등 금융업은 장부가·이익 구조가 달라 그레이엄 수가 왜곡됩니다 — **판단 유보**.")
+        return
+    g = data.graham(pd.DataFrame([row])).iloc[0]
+    fair, margin = g.fair, g.margin
+    if pd.isna(fair):
+        st.info("적자·자본잠식이거나 값이 없어 적정가를 계산할 수 없습니다 — **판단 유보**. "
+                "(그레이엄 수는 흑자·자본 양(+) 기업에만 뜻이 있습니다.)")
+        return
+    unit = "원" if (row.get("currency") == "KRW") else (row.get("currency") or "")
+    verdict = ("여유 있는 저평가" if margin >= 30 else "약간 저평가" if margin >= 0 else "적정가 위(고평가)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("그레이엄 적정가", f"{fair:,.2f} {unit}".strip())
+    c2.metric("현재가", f"{row.price:,.2f} {unit}".strip())
+    c3.metric("안전마진", f"{margin:+.0f}%", verdict, delta_color="off")
+    st.caption("적정가 ≈ √(22.5 × EPS × BPS), 22.5=PER15×PBR1.5 — 그레이엄이 **방어적 투자자**용으로 제시한 "
+               "어림값입니다. 성장주·자산경량 기업엔 지나치게 보수적이고, 장부가는 회계 기준에 민감합니다. "
+               "**반대 근거**: 적정가 위라도 이익이 빠르게 크면 정당할 수 있고, 아래라도 이익이 꺾이면 함정일 수 있습니다. "
+               "단일 잣대가 아니라 참고용이며 백테스트로 검증된 수치가 아닙니다.")
 
 
 def _render_trend_badge(row):

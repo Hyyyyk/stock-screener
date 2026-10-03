@@ -620,3 +620,20 @@ def relative_strength(df):
     r3, r6 = pd.to_numeric(r3, errors="coerce"), pd.to_numeric(r6, errors="coerce")
     raw = 2 * r3.fillna(r6) + r6.fillna(r3)        # 한쪽만 있으면 그 값으로 메움, 둘 다 없으면 NaN
     return raw.groupby(df.country).rank(pct=True) * 100
+
+
+# 그레이엄 수(Graham Number): 방어적 투자자용 적정가 어림. 적정가 ≈ √(22.5·EPS·BPS).
+# 22.5 = PER 15 × PBR 1.5 — 그레이엄이 『현명한 투자자』에서 방어적 종목의 상한 '엄지손가락 규칙'
+# 으로 제시한 값이다(그의 주장). 안전마진 %는 적정가 대비 현재가가 얼마나 싼가(내 계산).
+# EPS·BPS·현재가가 모두 양(+)일 때만 뜻이 있고(적자·자본잠식·마이너스가격 → 판단 유보),
+# 성장주·금융업·무형자산 중심 기업에는 맞지 않는다(호출부에서 따로 거른다).
+def graham(df):
+    """적정가(fair)와 안전마진 %(margin) DataFrame. 계산 불가 행은 NaN(판단 유보)."""
+    need = ("net_income", "equity", "shares", "price")
+    if any(c not in df for c in need):
+        return pd.DataFrame({"fair": float("nan"), "margin": float("nan")}, index=df.index)
+    ni, eq, sh, price = (pd.to_numeric(df[c], errors="coerce") for c in need)
+    eps, bps = ni / sh, eq / sh
+    valid = (sh > 0) & (eps > 0) & (bps > 0) & (price > 0)
+    fair = ((22.5 * eps * bps).where(valid)) ** 0.5
+    return pd.DataFrame({"fair": fair, "margin": (fair / price - 1) * 100}, index=df.index)
