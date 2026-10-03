@@ -3,6 +3,7 @@ from pathlib import Path
 
 DB = "stocks.db"
 CACHE = Path("cache")
+WATCHLIST = Path("watchlist.json")     # 관심종목 (로컬 전용)
 
 PRESETS = {
     "균형": {"pbr": 1.0, "roe": 1.0, "op_growth": 1.0, "debt_ratio": 0.7, "flow_net": 0.7},

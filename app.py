@@ -7,6 +7,7 @@ import os
 import data
 import detail_view
 import screener
+import watchlist
 from settings import CAP_STEPS, FILTERS, PRESETS
 
 st.set_page_config(page_title="저평가주 스크리너", layout="wide")
@@ -76,6 +77,10 @@ with st.sidebar:
                           help="DB에 저장된 최근 3개 연도의 매출이 매년 늘어난 종목만.")
     only_turn = st.checkbox("흑자전환 (작년 적자→올해 흑자)", value=False,
                             help="직전 연도는 순손실, 최근 연도는 순이익인 종목만.")
+    _wl = watchlist.load()
+    only_watch = st.checkbox(f"⭐ 관심종목만 보기 ({len(_wl)})", value=False,
+                             help="종목 상세의 ⭐ 버튼으로 담은 종목만. 등수 조건은 건너뛰고 "
+                                  "거래소·시총 필터만 적용합니다.")
 
     st.divider()
     if by_sector:
@@ -108,18 +113,22 @@ pct_all, applicable = screener.percentiles(universe, CORE, by_sector)
 
 # ---------------- 깔때기: 단계별로 몇 개가 걸러지는가 ----------------
 base = universe[universe.sector.isin(sectors)] if sectors else universe
-steps = screener.apply_filters(base, FILTERS, cuts, pct_all, applicable, by_sector, roe_floor)
-cur = steps[-1][1]
-
-f = steps[-1][1]
-if f.empty:
-    st.error("조건에 맞는 종목이 없습니다. 사이드바에서 조건을 풀어보세요.")
-    st.stop()
+if only_watch:                                    # 관심종목은 등수 조건 없이 전부 보여준다
+    f = base[base.ticker.isin(_wl)]
+    if f.empty:
+        st.info("관심종목이 없습니다 (또는 현재 거래소·시총 필터 밖입니다). "
+                "'⭐ 관심종목만 보기'를 끄고, 종목을 클릭·검색해 상세에서 ⭐ 버튼으로 담으세요.")
+        st.stop()
+else:
+    f = screener.apply_filters(base, FILTERS, cuts, pct_all, applicable, by_sector, roe_floor)[-1][1]
+    if f.empty:
+        st.error("조건에 맞는 종목이 없습니다. 사이드바에서 조건을 풀어보세요.")
+        st.stop()
 
 sc_all = data.weighted_score(pct_all, PRESETS[preset], min_axes=2)  # 한 축만으로 높은 종합점수가 되지 않게 한다
 pct, f = pct_all.loc[f.index], f.assign(score=sc_all.loc[f.index])
 
-st.subheader(f"🏆 후보 {len(f):,}종목")
+st.subheader(f"⭐ 관심종목 {len(f):,}개" if only_watch else f"🏆 후보 {len(f):,}종목")
 st.caption(f"**{preset}** 기준 · {len(CORE)}개 축을 **시장 전체 {len(universe):,}개 종목 기준** "
            "백분위로 환산해 가중평균한 점수입니다. 100에 가까울수록 조건에 잘 맞습니다."
            if not by_sector else

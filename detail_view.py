@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import data
+import watchlist
 import market_data
 
 
@@ -25,6 +26,10 @@ def render(df, view, event, pct_all, by_sector, core):
     row = df.loc[idx]
     st.divider()
     st.subheader(f"{row['name']}  ·  {row.ticker}  ·  {row.market}")
+    watched = row.ticker in watchlist.load()
+    if st.button("⭐ 관심종목 해제" if watched else "☆ 관심종목 추가", key=f"wl_{row.ticker}"):
+        watchlist.toggle(row.ticker)
+        st.rerun()
     meta = [row.get("sector"), row.get("size_bucket"),
             f"재무 {int(row.fiscal_year)}년" if pd.notna(row.get("fiscal_year")) else None,
             f"데이터 {int(row.data_axes)}/{int(row.data_expected)}축"]
