@@ -165,7 +165,6 @@ if only_watch:                                      # 관심종목은 주가 중
     }
     st.caption("담아둔 종목의 **주가·점수·지표**를 한눈에. 행을 **클릭**하면 아래에 상세가 펼쳐집니다.")
 else:
-    reasons = pct_all.loc[view.index].apply(data.score_reason, axis=1)
     show = pd.DataFrame({
         "순위": range(1, len(view) + 1),
         "티커": view.ticker.values,
@@ -176,7 +175,6 @@ else:
         "규모": view.size_bucket.values,
         "점수": view.score.values,
         "데이터": view.data_completeness.values,
-        "선정 이유": reasons.values,
         **{label: view[col].values for label, col, _, _, _ in CORE},
     })
     col_cfg = {
