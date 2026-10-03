@@ -92,8 +92,30 @@ def _render_price(row):
     area = base.mark_area(line={"color": "#3b82f6"}, color="#3b82f6", opacity=0.12).encode(
         y=alt.Y("종가:Q", title=f"종가 ({unit})" if unit else "종가", scale=alt.Scale(zero=False)),
         tooltip=[alt.Tooltip("날짜:T", format="%Y-%m-%d"), alt.Tooltip("종가:Q", format=",.2f")])
-    st.altair_chart(area.properties(height=320), width="stretch")
-    st.caption("일별 종가 기준 · 장중 고가·저가가 아닌 기간 내 종가 범위 · 출처: Yahoo Finance")
+    layers = [area]
+    hist_ma = market_data.moving_averages(history)        # 50일·150일(30주) 이평
+    ma_cols = [c for c in ("50일", "150일") if hist_ma[c].notna().any()]
+    if ma_cols:
+        long = hist_ma.melt("날짜", ma_cols, var_name="이평", value_name="값").dropna(subset=["값"])
+        layers.append(alt.Chart(long).mark_line(size=1.5).encode(
+            x="날짜:T", y="값:Q",
+            color=alt.Color("이평:N", title=None,
+                            scale=alt.Scale(domain=["50일", "150일"], range=["#f59e0b", "#8b5cf6"])),
+            tooltip=["날짜:T", "이평:N", alt.Tooltip("값:Q", format=",.2f")]))
+    st.altair_chart(alt.layer(*layers).resolve_scale(y="shared").properties(height=320), width="stretch")
+    st.caption("일별 종가 · 주황=50일, 보라=150일(30주) 이평 · 출처: Yahoo Finance")
+
+    # 와인스타인 단계: 30주 이평엔 1년치가 필요해 기간과 무관하게 1년 이력으로 판정(캐시됨)
+    src = history if len(history) >= market_data.STAGE_MA + market_data.SLOPE_LOOKBACK else \
+        market_data.load_price_history(row.ticker, "1y")[0]
+    stage = market_data.stage_analysis(src)
+    if stage:
+        label, slope = stage
+        arrow = "▲" if slope > 1 else "▼" if slope < -1 else "▬"
+        st.caption(f"📐 단계(와인스타인 휴리스틱): **{label}** · 30주 이평 기울기 {slope:+.1f}% {arrow} — "
+                   "2단계(상승)를 매수 선호 국면으로 봅니다. 볼륨·패턴은 빠진 단순화, 제 제안 기준이라 백테스트 미검증.")
+    else:
+        st.caption("📐 단계 판정: 이력이 짧아 30주 이평을 만들 수 없어 **판단 유보**.")
 
 
 def _render_metrics(row, idx, pct_all, by_sector, core):
