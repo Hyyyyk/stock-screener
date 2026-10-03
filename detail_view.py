@@ -37,8 +37,6 @@ def render(df, view, event, pct_all, by_sector, core):
     if row.get("financial_stale", False):
         st.warning("이 종목의 재무 데이터가 기대 기준연도보다 오래됐습니다. 점수를 참고용으로만 보세요.")
     st.info("🔎 " + data.interpret(row))
-    if idx in pct_all.index:
-        st.caption("선정 이유(등수): " + data.score_reason(pct_all.loc[idx]))
     summary = data.load_business(row.ticker)
     if summary:
         st.markdown(f"🏢 {summary}")
