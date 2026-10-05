@@ -217,7 +217,19 @@ def _render_history(row):
     if cashflow:
         c2.bar_chart(history[cashflow])
         c2.caption("영업에서 벌어(+) · 투자에 쓰고(−) · 재무로 조달·상환(−)한 실제 현금")
-    st.dataframe(history.T.round(0), width="stretch")
+    disp = history.copy()
+    if "순이익" in disp and "매출액" in disp:                # 순이익률(%) = 순이익 ÷ 매출액
+        disp["순이익률"] = disp["순이익"] / disp["매출액"].where(disp["매출액"] != 0) * 100
+    order = ["매출액", "영업이익", "순이익", "순이익률", "영업CF", "투자CF", "재무CF"]
+    disp = disp[[c for c in order if c in disp]]
+
+    def cell(v, is_pct):                                    # 순이익률은 %, 금액은 천 단위 콤마
+        if pd.isna(v):
+            return "–"
+        return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
+
+    table = disp.T.apply(lambda r: r.map(lambda v: cell(v, r.name == "순이익률")), axis=1)
+    st.dataframe(table, width="stretch")
 
 
 def _render_flow(row):
