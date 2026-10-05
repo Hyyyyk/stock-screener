@@ -82,8 +82,9 @@ with st.sidebar:
                             help="직전 연도는 순손실, 최근 연도는 순이익인 종목만.")
     only_trend = st.checkbox("📈 추세 양호만 (상승 추세 구간)", value=False,
                              help="52주 고점 대비 -25% 이내 그리고 저점 대비 +30% 이상인 종목만. "
-                                  "점수(가치·성장)는 그대로 두고 '시점'만 덧씌우는 필터입니다. "
-                                  "미너비니 추세 템플릿의 가격 위치 조건 일부 — 제 제안 기준이라 백테스트 미검증.")
+                                  "미너비니 추세 템플릿의 가격 위치 조건 일부. "
+                                  "⚠️ 우리 백테스트(2021~26, 생존편향 상한선)에선 이 추세 선택이 시장을 "
+                                  "연 24%p 하회했습니다 — 매수 신호가 아니라 위치 참고용. (RS 필터는 벤치 상회)")
     only_rs = st.checkbox("📊 RS(상대강도) 상위 30%만", value=False,
                           help="같은 나라 종목 중 최근 3·6개월 수익률 순위 상위 30%만. "
                                "오닐·미너비니의 상대강도 개념 — 점수는 그대로 두는 '시점' 오버레이. "
@@ -293,8 +294,8 @@ with tab_screener:
         })
         col_cfg = {
             "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
-            "추세": st.column_config.TextColumn(help="52주 고·저 대비 위치 · 상승 추세/조정 중/약세 "
-                                                     "(미너비니 가격조건 일부, 제 제안 기준)"),
+            "추세": st.column_config.TextColumn(help="52주 고·저 대비 위치 · 상승 추세/조정 중/약세. "
+                                                     "⚠️ 백테스트(2021~26)에선 추세 선택이 시장을 못 이김 — 위치 참고용"),
             "RS": st.column_config.NumberColumn(format="%.0f", help="상대강도 — 같은 나라 안 최근 3·6개월 "
                                                                    "수익률 순위(0~100, 높을수록 강함). 오닐·미너비니."),
             "데이터": st.column_config.ProgressColumn("데이터 완성도", format="%.0f%%", min_value=0, max_value=100,

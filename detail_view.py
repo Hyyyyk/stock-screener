@@ -93,6 +93,8 @@ def _render_trend_badge(row):
     detail = f"52주 고점 대비 {d_hi:+.0f}% · 저점 대비 {d_lo:+.0f}%"
     (st.success if label == "상승 추세" else st.warning if label == "약세" else st.info)(
         f"{icon} 추세: **{label}** — {detail}")
+    st.caption("⚠️ 우리 백테스트(2021~26, 생존편향 상한선)에선 이 추세 신호로 고른 전략이 "
+               "시장(동일가중)을 **연 24%p 하회**했습니다. **매수 신호가 아니라 '지금 가격이 어디 있나' 위치 참고용**으로만 보세요.")
     r3, r6 = row.get("ret_3m"), row.get("ret_6m")
     parts = []
     if pd.notna(r3): parts.append(f"3개월 {r3:+.0f}%")
