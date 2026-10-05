@@ -65,22 +65,14 @@ with st.sidebar:
     st.divider()
     countries = st.multiselect("시장 국가", ["한국", "미국"], default=["한국", "미국"])
     df = df[df.country.isin([{"한국": "KR", "미국": "US"}[c] for c in countries])] if countries else df
-    exchanges = sorted(df.market.unique())
-    default = [e for e in exchanges if e in ("Nasdaq", "NYSE", "KOSPI", "KOSDAQ")] or exchanges
-    markets = st.multiselect("거래소", exchanges, default=default,
-                             help="OTC는 장외라 유동성이 낮습니다. 기본은 제외합니다.")
-    cap_label = st.select_slider("최소 시가총액", list(CAP_STEPS), value="$100M",
-                                 help="너무 작으면 거래량이 없어 실제로 사고팔기 어렵습니다. "
-                                      "한국 종목은 원/달러 환율로 환산해 비교합니다.")
-    drop_funds = st.checkbox("ETF·펀드 제외", value=True,
-                             help="주식이 아닌 상품이 SEC에 재무를 제출해 섞여 들어옵니다.")
     sectors = st.multiselect("업종", sorted(df.sector.unique()), default=[],
                              placeholder="전체 업종")
-    by_sector = st.checkbox("업종·규모 안에서 비교", value=True,
-                            help="켜면 같은 나라·업종·시총규모끼리만 겨룹니다. "
-                                 "끄면 시장 전체에 같은 절대값 기준을 적용합니다 — "
-                                 "이때 은행처럼 부채비율이 원래 높은 업종은 통째로 빠지고, "
-                                 "소형주가 '싼가'를 독식합니다.")
+
+    # 거의 안 바꾸는 값들은 고정한다(사이드바 정리). 바꾸려면 여기 숫자를 고치면 된다.
+    exchanges = sorted(df.market.unique())
+    markets = [e for e in exchanges if e in ("Nasdaq", "NYSE", "KOSPI", "KOSDAQ")] or exchanges
+    drop_funds = True                                 # ETF·펀드는 항상 제외(주식만)
+    by_sector = True                                  # 항상 같은 나라·업종·규모 안에서 비교(추천 방식)
 
     st.divider()
     st.caption("이런 종목만 보기")
@@ -106,26 +98,28 @@ with st.sidebar:
                                   "거래소·시총 필터만 적용합니다.")
 
     st.divider()
-    if by_sector:
+    cuts, roe_floor = {}, None
+    with st.expander("⚙ 고급 설정 — 시총·조건 세부 조정", expanded=False):
+        cap_label = st.select_slider("최소 시가총액", list(CAP_STEPS), value="$100M",
+                                     help="너무 작으면 거래량이 없어 실제로 사고팔기 어렵습니다. "
+                                          "한국 종목은 원/달러 환율로 환산해 비교합니다.")
         st.caption("각 조건은 **같은 나라·업종·규모 안에서의 등수**로 거릅니다. "
                    "종목이 적은 그룹은 같은 나라·규모 전체 등수와 섞어 튀지 않게 합니다.")
-    cuts, roe_floor = {}, None
-    for stage, col, direction, (label, lo, hi, dflt, step), pct_dflt in FILTERS:
-        if col not in CORE_COLS:
-            continue
-        st.subheader(stage)
-        cuts[col] = (st.slider(f"{label.split(' ')[0]} 그룹 내 상위 %", 5, 100, pct_dflt, 5,
-                               key=f"{col}_pct")
-                     if by_sector else st.slider(label, lo, hi, dflt, step, key=col))
-        if col == "roe" and by_sector:
-            roe_floor = st.slider("ROE 최소 (%)", -10.0, 30.0, 5.0, 0.5, key="roe_floor",
-                                  help="등수와 별개로 적용합니다. ROE 가 전반적으로 낮은 그룹에서는 "
-                                       "예금금리 수준만 벌어도 '상위 50%' 에 들기 때문입니다.")
-        if col == "flow_net":
-            st.caption("한국만 적용합니다. 미국은 일별 수급 데이터가 없어 이 단계를 건너뜁니다. "
-                       "출처: 네이버 증권(비공식)")
-        if col == "debt_ratio":
-            st.caption("은행·보험은 부채 구조가 일반 기업과 달라 이 축을 점수와 필터에서 제외합니다.")
+        for stage, col, direction, (label, lo, hi, dflt, step), pct_dflt in FILTERS:
+            if col not in CORE_COLS:
+                continue
+            st.subheader(stage)
+            cuts[col] = st.slider(f"{label.split(' ')[0]} 그룹 내 상위 %", 5, 100, pct_dflt, 5,
+                                  key=f"{col}_pct")
+            if col == "roe":
+                roe_floor = st.slider("ROE 최소 (%)", -10.0, 30.0, 5.0, 0.5, key="roe_floor",
+                                      help="등수와 별개로 적용합니다. ROE 가 전반적으로 낮은 그룹에서는 "
+                                           "예금금리 수준만 벌어도 '상위 50%' 에 들기 때문입니다.")
+            if col == "flow_net":
+                st.caption("한국만 적용합니다. 미국은 일별 수급 데이터가 없어 이 단계를 건너뜁니다. "
+                           "출처: 네이버 증권(비공식)")
+            if col == "debt_ratio":
+                st.caption("은행·보험은 부채 구조가 일반 기업과 달라 이 축을 점수와 필터에서 제외합니다.")
 
 tab_screener, tab_all = st.tabs(["🏆 스크리너", "📋 전체 종목"])
 
