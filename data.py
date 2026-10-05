@@ -72,9 +72,13 @@ def data_freshness():
     if not years:  # 기존 DB: 미국 컬럼명의 연도에서 안전하게 추론한다
         years = [int(m.group(1)) for c in us.columns
                  if (m := re.fullmatch(r"revenue_(\d{4})", c))]
+    balance = None                                    # 잔고(자본·부채)는 손익보다 최신 분기로 받는다
+    if "balance_report" in kr and kr.balance_report.notna().any():
+        balance = str(kr.balance_report.mode().iloc[0])   # 예: "2026 반기"
     return {"price": repository.scalar("select max(fetched_at) from prices"),
             "flow": repository.scalar("select max(flow_asof) from flows"),
-            "fiscal_year": max(years) if years else None}
+            "fiscal_year": max(years) if years else None,
+            "balance": balance}
 
 
 def data_asof():

@@ -34,6 +34,22 @@ def latest_annual_year(today=None):
 
 YEAR = str(latest_annual_year())  # 사업보고서 기준연도 (응답에 전기가 함께 온다)
 ANNUAL_REPORT = "11011"  # 사업보고서
+
+
+def latest_quarter_report(today=None):
+    """잔고를 최신화할 최신 분기/반기 보고서 (bsns_year, reprt_code, 라벨).
+
+    제출 마감(분기말+45일, 반기말+45일)을 고려해 '이미 나왔을' 가장 최근 것을 고른다.
+    """
+    today = today or date.today()
+    y, m = today.year, today.month
+    if m >= 11:                       # 3분기(9월말) 보고서 ~11월 중순
+        return y, "11014", f"{y} 3분기"
+    if m >= 8:                        # 반기(6월말) ~8월 중순
+        return y, "11012", f"{y} 반기"
+    if m >= 5:                        # 1분기(3월말) ~5월 중순
+        return y, "11013", f"{y} 1분기"
+    return y - 1, "11014", f"{y - 1} 3분기"   # 1~4월: 작년 3분기가 가장 최신 분기
 KRX_LIST = "https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
 
 # DART 계정명 → 우리 컬럼. 업종마다 쓰는 이름이 달라 앞에서부터 찾는다.
@@ -269,11 +285,17 @@ def main():
     print(f"KRX 상장 {len(listed):,} · DART 매칭 {len(targets):,}종목 "
           f"· 호출 {-(-len(targets) // BATCH):,}회")
 
-    # 재무는 한 번 받으면 분기까지 안 바뀐다. 연도별로 캐시해 재실행 때 재사용한다.
+    # 손익은 연도별로 캐시해 재사용(분기까지 안 바뀜). 잔고만 최신 분기로 덮어쓴다.
     got = _collect_annual(targets, YEAR)                  # 당기·전기
     oldest_year = str(int(YEAR) - 2)
     got_oldest = _collect_annual(targets, oldest_year)    # 매출 3년 연속 증가 판정용
-    return finish(targets, got, got_oldest)
+
+    qy, qr, qlabel = latest_quarter_report()              # 자본·부채·자산을 최신 분기로 갱신
+    print(f"잔고 최신화: {qlabel} 보고서")
+    for cc, bal in _collect_quarter_balance(targets, qy, qr).items():
+        if cc in got:
+            got[cc].update(bal)
+    return finish(targets, got, got_oldest, qlabel)
 
 
 def _collect_annual(targets, year):
@@ -300,7 +322,37 @@ def _collect_annual(targets, year):
     return got
 
 
-def finish(targets, got, got_oldest):
+def _collect_quarter_balance(targets, year, reprt):
+    """최신 분기/반기 보고서의 재무상태표(자산·부채·자본)만. {corp_code: {assets,liabilities,equity}}.
+
+    소득(손익)은 분기별로 뜻이 달라져 손대지 않고, 시점 지표인 잔고만 최신으로 갱신한다.
+    """
+    cache = CACHE / f"dart_bal_{year}_{reprt}.json"
+    if cache.exists():
+        got = json.loads(cache.read_text(encoding="utf-8"))
+        print(f"  분기잔고({year}·{reprt}) 캐시 재사용 {len(got):,}종목")
+        return got
+    got = {}
+    for i in range(0, len(targets), BATCH):
+        chunk = targets[i:i + BATCH]
+        try:
+            d = json.loads(api("fnlttMultiAcnt.json", corp_code=",".join(c[1] for c in chunk),
+                               bsns_year=str(year), reprt_code=reprt))
+            if d.get("status") == "000":
+                for cc, rec in parse(d["list"]).items():
+                    bal = {k: rec[k] for k in ("assets", "liabilities", "equity") if rec.get(k) is not None}
+                    if bal:
+                        got[cc] = bal
+        except Exception as e:
+            print(f"  분기잔고 배치 {i // BATCH} 실패: {type(e).__name__}")
+        if (i // BATCH) % 25 == 0:
+            print(f"  분기잔고: {i + len(chunk):>5,}/{len(targets):,}  받음 {len(got):,}")
+        time.sleep(0.1)
+    cache.write_text(json.dumps(got, ensure_ascii=False), encoding="utf-8")
+    return got
+
+
+def finish(targets, got, got_oldest, balance_label):
     rows = []
     for s, cc, nm, mk in targets:
         if cc not in got:
@@ -308,7 +360,8 @@ def finish(targets, got, got_oldest):
         oldest = got_oldest.get(cc) or {}
         rows.append({"stock_code": s, "corp_code": cc, "name": nm, "market": mk, **got[cc],
                      "revenue_oldest": oldest.get("revenue"),
-                     "net_income_oldest": oldest.get("net_income"), "fiscal_year": int(YEAR)})
+                     "net_income_oldest": oldest.get("net_income"), "fiscal_year": int(YEAR),
+                     "balance_report": balance_label})
     if not rows:
         raise SystemExit("DART 에서 받은 재무가 없습니다. 차단이 풀린 뒤 다시 실행하세요.")
     df = derive(pd.DataFrame(rows))

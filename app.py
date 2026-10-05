@@ -47,7 +47,7 @@ with st.sidebar:
     if _px or _fl or _fy:
         parts = []
         if _fy:
-            parts.append(f"재무 {_fy}년")
+            parts.append(f"손익 {_fy}년" + (f" · 잔고 {fresh['balance']}" if fresh.get("balance") else ""))
         if _px:
             parts.append(f"시세 {str(_px)[:10]}")
         if _fl and len(str(_fl)) == 8:

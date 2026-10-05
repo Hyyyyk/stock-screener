@@ -32,8 +32,11 @@ def render(df, view, event, pct_all, by_sector, core):
         watchlist.toggle(row.ticker)
         st.rerun()
     c_nv.link_button("🔗 네이버 증권에서 보기", data.naver_url(row.ticker, row.country, row.market))
-    meta = [row.get("sector"), row.get("size_bucket"),
-            f"재무 {int(row.fiscal_year)}년" if pd.notna(row.get("fiscal_year")) else None,
+    bal = row.get("balance_report")                        # 잔고(자본·부채)는 손익보다 최신 분기
+    bal_txt = bal if pd.notna(bal) else ("최신 분기" if pd.notna(row.get("balance_period")) else None)
+    fin = (f"손익 {int(row.fiscal_year)}년" + (f" · 잔고 {bal_txt}" if bal_txt else "")
+           if pd.notna(row.get("fiscal_year")) else None)
+    meta = [row.get("sector"), row.get("size_bucket"), fin,
             f"데이터 {int(row.data_axes)}/{int(row.data_expected)}축"]
     st.caption(" · ".join(str(x) for x in meta if pd.notna(x)))
     if row.get("financial_stale", False):
