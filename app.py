@@ -166,7 +166,7 @@ with tab_all:
         "ROE": st.column_config.NumberColumn(format="%.1f%%"),
         "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
         "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
-        "수급": st.column_config.NumberColumn(format="%+.2f%%"),
+        "수급": st.column_config.NumberColumn(format="%+.1f%%"),
         "3개월%": st.column_config.NumberColumn(format="%+.1f%%"),
         "6개월%": st.column_config.NumberColumn(format="%+.1f%%"),
     })
@@ -249,7 +249,7 @@ with tab_screener:
                         "평균점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
                         "PBR중앙": st.column_config.NumberColumn(format="%.2f배"),
                         "ROE중앙": st.column_config.NumberColumn(format="%.1f%%"),
-                        "수급중앙": st.column_config.NumberColumn(format="%+.2f%%"),
+                        "수급중앙": st.column_config.NumberColumn(format="%+.1f%%"),
                     })
 
     view = f.sort_values("score", ascending=False).head(100)
@@ -259,7 +259,7 @@ with tab_screener:
         "ROE": st.column_config.NumberColumn(format="%.1f%%"),
         "영업익증가율": st.column_config.NumberColumn(format="%.1f%%"),
         "부채비율": st.column_config.NumberColumn(format="%.0f%%"),
-        "수급": st.column_config.NumberColumn(format="%+.2f%%"),
+        "수급": st.column_config.NumberColumn(format="%+.1f%%"),
     }
     if only_watch:                                      # 관심종목은 주가 중심 대시보드로 본다
         drawdown = (view.price / view.high52 - 1) * 100  # 52주 고점에서 얼마나 내려와 있나(음수)
@@ -276,7 +276,7 @@ with tab_screener:
         col_cfg = {
             "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
             "현재가": st.column_config.NumberColumn(format="%.2f", help="통화는 국가 기준(🇰🇷 원 · 🇺🇸 달러)"),
-            "당일%": st.column_config.NumberColumn(format="%+.2f%%"),
+            "당일%": st.column_config.NumberColumn(format="%+.1f%%"),
             "52주高대비": st.column_config.NumberColumn(format="%+.1f%%",
                                                         help="52주 최고가 대비 현재가 위치 · 0에 가까울수록 고점 부근, 음수가 클수록 많이 내려옴"),
             **metric_cfg,
