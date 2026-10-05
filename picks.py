@@ -15,10 +15,14 @@ COST = {"KR": 0.3, "US": 0.1}       # %
 BENCH_TICKER = {"US": "SPY", "KR": "069500.KS"}   # S&P500 · KODEX 200
 
 
-def _append(path, rows):
-    df = pd.DataFrame(rows)
-    header = not path.exists()
-    df.to_csv(path, mode="a", header=header, index=False, encoding="utf-8-sig")
+def _save_day(path, rows, today):
+    """오늘 날짜 기록을 새 것으로 교체해 쓴다(같은 날 여러 번 눌러도 중복 안 쌓이게)."""
+    new = pd.DataFrame(rows)
+    if path.exists():
+        old = pd.read_csv(path, encoding="utf-8-sig")
+        old = old[old["date"].astype(str) != today]       # 오늘 것 버리고
+        new = pd.concat([old, new], ignore_index=True)     # 새 오늘 것으로 교체
+    new.to_csv(path, index=False, encoding="utf-8-sig")
 
 
 def snapshot(view, preset, bench_prices):
@@ -30,9 +34,9 @@ def snapshot(view, preset, bench_prices):
         "trend": r.get("trend_label"), "rs": None if pd.isna(r.get("rs")) else round(float(r.rs)),
         "preset": preset,
     } for _, r in view.iterrows()]
-    _append(PICKS, rows)
-    _append(BENCH, [{"date": today, "country": c, "ticker": t, "entry_price": bench_prices.get(t)}
-                    for c, t in BENCH_TICKER.items() if bench_prices.get(t)])
+    _save_day(PICKS, rows, today)
+    _save_day(BENCH, [{"date": today, "country": c, "ticker": t, "entry_price": bench_prices.get(t)}
+                      for c, t in BENCH_TICKER.items() if bench_prices.get(t)], today)
     return len(rows)
 
 
