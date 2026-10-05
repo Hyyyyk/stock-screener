@@ -6,6 +6,8 @@ import os
 
 import data
 import detail_view
+import market_data
+import picks as picks_mod
 import screener
 import watchlist
 from settings import CAP_STEPS, FILTERS, PRESETS
@@ -21,6 +23,12 @@ except Exception:
     pass
 
 df = data.load_stocks()
+price_now = dict(zip(df.ticker, df.price))        # 성과 추적용: 필터 전 전 종목 현재가
+
+
+@st.cache_data(ttl=1800, show_spinner=False)      # 벤치마크 현재가 (네트워크 1회/30분)
+def bench_now():
+    return picks_mod.price_snapshot()
 CORE = data.available(df, data.CORE)              # 값이 없는 축은 통째로 뺀다
 CORE_COLS = [c for _, c, *_ in CORE]
 missing = [m for m in data.CORE if m not in CORE]
@@ -195,6 +203,7 @@ if not only_watch:                                  # 숲 보기: 지금 어느 
                 })
 
 view = f.sort_values("score", ascending=False).head(100)
+view = view.assign(trend_label=data.trend_label(view), rs=rs_all.reindex(view.index))
 metric_cfg = {                                      # 두 표(랭킹·대시보드)가 함께 쓰는 지표 서식
     "PBR": st.column_config.NumberColumn(format="%.2f배"),
     "ROE": st.column_config.NumberColumn(format="%.1f%%"),
@@ -254,10 +263,35 @@ event = st.dataframe(
     on_select="rerun", selection_mode="single-row", key="rank_sel",
     column_config=col_cfg,
 )
-st.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
-                   "screener.csv", "text/csv")
+c_dl, c_snap = st.columns([1, 1])
+c_dl.download_button("CSV 내려받기", show.to_csv(index=False).encode("utf-8-sig"),
+                     "screener.csv", "text/csv")
+if not only_watch:                                  # 전방 추적: 오늘 상위 N종목을 스냅샷으로 저장
+    n_snap = min(20, len(view))
+    if c_snap.button(f"📸 오늘 추천 상위 {n_snap}종목 저장 (전방 추적)",
+                     help="지금 상위 종목을 오늘 날짜로 기록합니다. 시간이 지나면 아래 '성과 추적'에서 "
+                          "벤치마크 대비 성과를 봅니다. 로컬에 저장되며, 보존하려면 커밋하세요."):
+        saved = picks_mod.snapshot(view.head(n_snap), preset, bench_now())
+        st.success(f"{saved}종목 저장 완료 ({pd.Timestamp.now():%Y-%m-%d}). "
+                   "보존하려면 picks.csv·bench.csv를 커밋하세요.")
 
 detail_view.render(df, view, event, pct_all, by_sector, CORE)
+
+# ---------------- 성과 추적 (전방 테스트) ----------------
+if not picks_mod.load().empty:
+    with st.expander("📈 성과 추적 — 저장한 추천의 실제 성과"):
+        perf = picks_mod.performance(price_now, bench_now())
+        if perf.empty:
+            st.caption("아직 저장된 추천이 없습니다.")
+        else:
+            st.caption("저장일(코호트)별 · 전략 = 상위 종목 동일가중 수익률(왕복 비용 차감) · "
+                       "벤치마크 = SPY·KODEX200 · 상폐·정지 종목은 −100%로 집계(생존편향 방지). "
+                       "**표본이 적고 기간이 짧으면 운에 가깝습니다** — 수개월 쌓인 뒤 판단하세요.")
+            st.dataframe(perf, hide_index=True, width="stretch", column_config={
+                "전략수익률": st.column_config.NumberColumn(format="%+.1f%%"),
+                "벤치수익률": st.column_config.NumberColumn(format="%+.1f%%"),
+                "초과": st.column_config.NumberColumn("초과수익", format="%+.1f%%"),
+            })
 
 st.caption("SEC EDGAR·DART 공시 재무, Yahoo 시세, 네이버 증권 수급(한국)을 정해진 규칙으로 정렬해 보여주는 도구입니다. "
            "투자 자문이 아니며, 투자 판단과 그 결과의 책임은 본인에게 있습니다.")

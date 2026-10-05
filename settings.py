@@ -4,6 +4,8 @@ from pathlib import Path
 DB = "stocks.db"
 CACHE = Path("cache")
 WATCHLIST = Path("watchlist.json")     # 관심종목 (로컬 전용)
+PICKS = Path("picks.csv")              # 전방 추적 스냅샷 (커밋해서 보존)
+BENCH = Path("bench.csv")              # 스냅샷 시점 벤치마크 가격
 
 PRESETS = {
     "균형": {"pbr": 1.0, "roe": 1.0, "op_growth": 1.0, "debt_ratio": 0.7, "flow_net": 0.7},
