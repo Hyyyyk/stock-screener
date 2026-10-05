@@ -612,6 +612,14 @@ def trend_label(df):
 # 상대강도(RS): 오닐·미너비니가 쓰는 "시장 대비 얼마나 센가". 절대 수익률이 아니라
 # 같은 나라 종목들 사이의 '순위'다(한·미는 통화·국면이 달라 섞지 않는다).
 # 최근 3개월에 2배 가중한 3·6개월 수익률을 블렌딩(제 제안). 둘 다 없으면 <NA>(판단 유보).
+def naver_url(ticker, country, market):
+    """네이버 증권 종목 페이지 URL. 한국은 종목코드, 미국은 해외증권(거래소코드 O/N)."""
+    if country == "KR":
+        return f"https://finance.naver.com/item/main.naver?code={str(ticker).split('.')[0]}"
+    exch = {"Nasdaq": "O", "NYSE": "N"}.get(market, "O")
+    return f"https://m.stock.naver.com/worldstock/stock/{ticker}.{exch}/total"
+
+
 def relative_strength(df):
     """RS 백분위 Series(0~100, 높을수록 강함). 같은 country 안에서 순위."""
     r3, r6 = df.get("ret_3m"), df.get("ret_6m")

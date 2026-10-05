@@ -144,6 +144,7 @@ with tab_all:
                     | allv["name"].str.lower().str.contains(ql, na=False)]
     allv = allv.assign(size_bucket=allv.groupby("country").market_cap.transform(data.size_bucket))
     show_all = pd.DataFrame({
+        "네이버": [data.naver_url(t, c, m) for t, c, m in zip(allv.ticker, allv.country, allv.market)],
         "티커": allv.ticker.values, "종목": allv["name"].values,
         "국가": allv.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
         "거래소": allv.market.values, "업종": allv.sector.values, "규모": allv.size_bucket.values,
@@ -155,6 +156,7 @@ with tab_all:
     })
     st.caption(f"{len(show_all):,}종목 · 시총은 달러 환산($M) · 현재가 통화는 국가 기준")
     st.dataframe(show_all, width="stretch", hide_index=True, height=600, column_config={
+        "네이버": st.column_config.LinkColumn("네이버", display_text="열기 ↗", width="small"),
         "현재가": st.column_config.NumberColumn(format="%.2f"),
         "시총($M)": st.column_config.NumberColumn(format="%.0f"),
         "PBR": st.column_config.NumberColumn(format="%.2f배"),
@@ -259,6 +261,7 @@ with tab_screener:
     if only_watch:                                      # 관심종목은 주가 중심 대시보드로 본다
         drawdown = (view.price / view.high52 - 1) * 100  # 52주 고점에서 얼마나 내려와 있나(음수)
         show = pd.DataFrame({
+            "네이버": [data.naver_url(t, c, m) for t, c, m in zip(view.ticker, view.country, view.market)],
             "티커": view.ticker.values,
             "종목": view["name"].values,
             "국가": view.country.map({"US": "🇺🇸", "KR": "🇰🇷"}).values,
@@ -269,6 +272,7 @@ with tab_screener:
             **{label: view[col].values for label, col, _, _, _ in CORE},
         })
         col_cfg = {
+            "네이버": st.column_config.LinkColumn("네이버", display_text="열기 ↗", width="small"),
             "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
             "현재가": st.column_config.NumberColumn(format="%.2f", help="통화는 국가 기준(🇰🇷 원 · 🇺🇸 달러)"),
             "당일%": st.column_config.NumberColumn(format="%+.1f%%"),
@@ -279,6 +283,7 @@ with tab_screener:
         st.caption("담아둔 종목의 **주가·점수·지표**를 한눈에. 행을 **클릭**하면 아래에 상세가 펼쳐집니다.")
     else:
         show = pd.DataFrame({
+            "네이버": [data.naver_url(t, c, m) for t, c, m in zip(view.ticker, view.country, view.market)],
             "순위": range(1, len(view) + 1),
             "티커": view.ticker.values,
             "종목": view["name"].values,
@@ -293,6 +298,7 @@ with tab_screener:
             **{label: view[col].values for label, col, _, _, _ in CORE},
         })
         col_cfg = {
+            "네이버": st.column_config.LinkColumn("네이버", display_text="열기 ↗", width="small"),
             "점수": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
             "추세": st.column_config.TextColumn(help="52주 고·저 대비 위치 · 상승 추세/조정 중/약세. "
                                                      "⚠️ 백테스트(2021~26)에선 추세 선택이 시장을 못 이김 — 위치 참고용"),

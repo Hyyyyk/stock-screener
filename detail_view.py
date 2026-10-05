@@ -31,12 +31,7 @@ def render(df, view, event, pct_all, by_sector, core):
     if c_wl.button("⭐ 관심종목 해제" if watched else "☆ 관심종목 추가", key=f"wl_{row.ticker}"):
         watchlist.toggle(row.ticker)
         st.rerun()
-    if row.country == "KR":                                # 네이버 증권 바로가기
-        naver = f"https://finance.naver.com/item/main.naver?code={row.ticker.split('.')[0]}"
-    else:
-        exch = {"Nasdaq": "O", "NYSE": "N"}.get(row.market, "O")   # 네이버 해외증권 거래소 코드
-        naver = f"https://m.stock.naver.com/worldstock/stock/{row.ticker}.{exch}/total"
-    c_nv.link_button("🔗 네이버 증권에서 보기", naver)
+    c_nv.link_button("🔗 네이버 증권에서 보기", data.naver_url(row.ticker, row.country, row.market))
     meta = [row.get("sector"), row.get("size_bucket"),
             f"재무 {int(row.fiscal_year)}년" if pd.notna(row.get("fiscal_year")) else None,
             f"데이터 {int(row.data_axes)}/{int(row.data_expected)}축"]
